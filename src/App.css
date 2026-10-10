@@ -116,3 +116,15 @@ summary { cursor: pointer; font-weight: 600; }
 .stnpanel p { margin: 4px 0; }
 .stnpanel ul { margin: 4px 0 0; }
 .stnpanel button { padding: 2px 8px; }
+.toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.toggle button { border: 0; border-radius: 0; padding: 4px 10px; font-size: 13px; }
+.toggle button.on { background: var(--ink); color: var(--card); }
+.geomap { height: 420px; width: 100%; border-radius: 10px; z-index: 0; }
+.stnpanel { position: relative; }
+.stnpanel .close { position: absolute; top: 8px; right: 8px; }
+.stninfo { display: grid; gap: 4px; font-size: 13px; }
+.stninfo .chips { margin: 2px 0; }
+.stninfo p { margin: 2px 0; }
+.stninfo ul { margin: 2px 0 0; padding-left: 18px; }
+.leaflet-popup-content { margin: 10px 12px; min-width: 220px; }
+@media (max-width: 600px) { .geomap { height: 340px; } }

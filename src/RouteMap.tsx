@@ -1,7 +1,11 @@
-import { useMemo, useState } from 'react'
+import { Suspense, lazy, useMemo, useState } from 'react'
 import { fmtHour, type DayContext } from './engine'
-import { GRAPHS, OHC, serviceHour, type ServiceHour } from './flows'
-import { LINE, LINES, STATIONS, kindLabel, type LineId, type ServiceId } from './network'
+import { GRAPHS, OHC, serviceHour } from './flows'
+import { HAS_GEO, SERVICE_OF, boardingsAt, heat, n, type HourData } from './mapUtil'
+import StationInfo from './StationInfo'
+import { LINE, LINES, STATIONS, type LineId } from './network'
+
+const GeoMap = lazy(() => import('./GeoMap'))
 
 // Layout is generated from network.ts only, shaped like the on-train map:
 // Red+Yellow spine on y=0, Blue split above/below at Old High Court, Violet dropping from GNLU.
@@ -53,30 +57,15 @@ function layout() {
 
 const LAYOUT = layout()
 
-const SERVICE_OF: Record<LineId, ServiceId> = { blue: 'blue', red: 'redYellow', yellow: 'redYellow', violet: 'redYellow' }
-
-// grey → orange → red
-function heat(t: number): string {
-  const stops = [
-    [154, 160, 166],
-    [251, 140, 0],
-    [211, 47, 47],
-  ]
-  const x = Math.max(0, Math.min(1, t)) * 2
-  const i = Math.min(1, Math.floor(x))
-  const f = x - i
-  const c = stops[i].map((v, k) => Math.round(v + (stops[i + 1][k] - v) * f))
-  return `rgb(${c.join(',')})`
-}
-
-const n = (x: number) => Math.round(x).toLocaleString('en-IN')
-
 export default function RouteMap({ ctx, initialHour }: { ctx: DayContext; initialHour: number }) {
   const [hour, setHour] = useState(Math.min(LAST_HOUR, Math.max(FIRST_HOUR, initialHour)))
   const [selected, setSelected] = useState<string | null>(null)
+  const [view, setView] = useState<'map' | 'schematic'>(HAS_GEO ? 'map' : 'schematic')
+  const [offline, setOffline] = useState(false)
+  const showMap = view === 'map' && HAS_GEO && !offline
 
   const day = useMemo(() => {
-    const hours: Record<number, Record<ServiceId, ServiceHour>> = {}
+    const hours: Record<number, HourData> = {}
     let maxB = 1
     let maxL = 1
     for (let h = FIRST_HOUR; h <= LAST_HOUR; h++) {
@@ -92,7 +81,7 @@ export default function RouteMap({ ctx, initialHour }: { ctx: DayContext; initia
   }, [ctx])
 
   const now = day.hours[hour]
-  const boardings = (id: string) => (now.blue.boardings[id] ?? 0) + (now.redYellow.boardings[id] ?? 0)
+  const boardings = (id: string) => boardingsAt(now, id)
   const linkLoad = (segId: string, line: LineId) => {
     const sid = SERVICE_OF[line]
     const i = GRAPHS[sid].edges.findIndex((e) => e.id === segId)
@@ -103,7 +92,17 @@ export default function RouteMap({ ctx, initialHour }: { ctx: DayContext; initia
   return (
     <div className="routemap">
       <div className="row">
-        <h3>Network map</h3>
+        <div className="row">
+          <h3>Network map</h3>
+          <div className="toggle" role="group" aria-label="Map view">
+            <button className={showMap ? 'on' : ''} aria-pressed={showMap} onClick={() => setView('map')}>
+              Map
+            </button>
+            <button className={!showMap ? 'on' : ''} aria-pressed={!showMap} onClick={() => setView('schematic')}>
+              Schematic
+            </button>
+          </div>
+        </div>
         <label className="slider">
           <span>
             {fmtHour(hour)}–{fmtHour(hour + 1)}
@@ -118,6 +117,14 @@ export default function RouteMap({ ctx, initialHour }: { ctx: DayContext; initia
           />
         </label>
       </div>
+      {view === 'map' && !showMap && (
+        <p className="note">{offline ? 'Map offline, showing schematic.' : 'No station coordinates bundled yet (run scripts/fetch-stations.ts), showing schematic.'}</p>
+      )}
+      {showMap ? (
+        <Suspense fallback={<p className="note">Loading map…</p>}>
+          <GeoMap now={now} maxB={day.maxB} onOffline={() => setOffline(true)} />
+        </Suspense>
+      ) : (
       <div className="mapscroll">
         <svg viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`} role="img" aria-label="Ahmedabad Metro route map coloured by load">
           {segs.map((s) => {
@@ -172,6 +179,7 @@ export default function RouteMap({ ctx, initialHour }: { ctx: DayContext; initia
           })}
         </svg>
       </div>
+      )}
       <div className="legend">
         {LINES.map((l) => (
           <span key={l.id}>
@@ -181,50 +189,21 @@ export default function RouteMap({ ctx, initialHour }: { ctx: DayContext; initia
         <span>
           <i className="sw heat" /> boardings this hour, low → high
         </span>
-        <span>Line width = passengers on that link</span>
+        {!showMap && <span>Line width = passengers on that link</span>}
         <span>◯ closed (Sabarmati Rly Stn)</span>
       </div>
-      {selected && <StationPanel id={selected} now={now} onClose={() => setSelected(null)} />}
+      {selected && !showMap && <StationPanel id={selected} now={now} onClose={() => setSelected(null)} />}
     </div>
   )
 }
 
-function StationPanel({ id, now, onClose }: { id: string; now: Record<ServiceId, ServiceHour>; onClose: () => void }) {
-  const st = STATIONS[id]
-  const services = [...new Set(st.lines.map((l) => SERVICE_OF[l]))]
-  const b = services.reduce((a, s) => a + (now[s].boardings[id] ?? 0), 0)
-  const kind = kindLabel(id)
-  const drivers = [
-    ...(kind ? [kind] : []),
-    ...services.flatMap((s) => now[s].stationDrivers[id] ?? []),
-    ...services.flatMap((s) => now[s].drivers.filter((d) => d.startsWith('office') || d.includes('holiday') || d.includes('rain'))),
-  ]
+function StationPanel({ id, now, onClose }: { id: string; now: HourData; onClose: () => void }) {
   return (
     <div className="stnpanel">
-      <div className="row">
-        <strong>{st.name}</strong>
-        <button aria-label="Close" onClick={onClose}>
-          ×
-        </button>
-      </div>
-      <div className="chips">
-        {st.lines.map((l) => (
-          <span key={l} className="chip" style={{ borderColor: LINE[l].color }}>
-            <i className="sw" style={{ background: LINE[l].color }} /> {LINE[l].name}
-          </span>
-        ))}
-        {st.closed && <span className="chip">Closed: work in progress</span>}
-      </div>
-      <p>
-        <strong>{st.closed ? '—' : n(b)}</strong> boardings, {fmtHour(now.blue.hour)}–{fmtHour(now.blue.hour + 1)}
-      </p>
-      {drivers.length > 0 && (
-        <ul>
-          {[...new Set(drivers)].map((d) => (
-            <li key={d}>{d}</li>
-          ))}
-        </ul>
-      )}
+      <button className="close" aria-label="Close" onClick={onClose}>
+        ×
+      </button>
+      <StationInfo id={id} now={now} />
     </div>
   )
 }
