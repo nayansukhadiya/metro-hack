@@ -1,3 +1,4 @@
+import { BRTS, brtsFor } from './brts'
 import { fmtHour } from './engine'
 import { GENERATORS, daysLabel, timingLabel } from './generators'
 import { SERVICE_OF, boardingsAt, n, type HourData } from './mapUtil'
@@ -30,6 +31,11 @@ export default function StationInfo({ id, now }: { id: string; now: HourData }) 
         <strong>{st.closed ? '—' : n(boardingsAt(now, id))}</strong> boardings · <strong>{st.closed ? '—' : n(alight)}</strong> alightings,{' '}
         {fmtHour(now.blue.hour)}–{fmtHour(now.blue.hour + 1)}
       </p>
+      {brtsFor(id).map((l) => (
+        <p key={l.brts} className="brtslink">
+          🚌 Janmarg <strong>{BRTS[l.brts].name}</strong> is a short walk · <span className={`tag ${l.source === 'same name' ? 'verified' : 'assumed'}`}>{l.source}</span>
+        </p>
+      ))}
       {gens.length > 0 && (
         <ul className="gens">
           {gens.map((g) => (

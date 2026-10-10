@@ -3,9 +3,11 @@ import { fmtHour, type DayContext } from './engine'
 import { GRAPHS, OHC, serviceHour } from './flows'
 import { HAS_GEO, SERVICE_OF, boardingsAt, heat, n, type HourData } from './mapUtil'
 import StationInfo from './StationInfo'
+import type { Relief } from './brts'
 import { LINE, LINES, STATIONS, type LineId } from './network'
 
 const GeoMap = lazy(() => import('./GeoMap'))
+const BrtsMap = lazy(() => import('./BrtsMap'))
 
 // Layout is generated from network.ts only, shaped like the on-train map:
 // Red+Yellow spine on y=0, Blue split above/below at Old High Court, Violet dropping from GNLU.
@@ -57,10 +59,10 @@ function layout() {
 
 const LAYOUT = layout()
 
-export default function RouteMap({ ctx, initialHour }: { ctx: DayContext; initialHour: number }) {
+export default function RouteMap({ ctx, initialHour, relief }: { ctx: DayContext; initialHour: number; relief: Relief[] }) {
   const [hour, setHour] = useState(Math.min(LAST_HOUR, Math.max(FIRST_HOUR, initialHour)))
   const [selected, setSelected] = useState<string | null>(null)
-  const [view, setView] = useState<'map' | 'schematic'>(HAS_GEO ? 'map' : 'schematic')
+  const [view, setView] = useState<'map' | 'schematic' | 'brts'>(HAS_GEO ? 'map' : 'schematic')
   const [offline, setOffline] = useState(false)
   const showMap = view === 'map' && HAS_GEO && !offline
 
@@ -98,8 +100,11 @@ export default function RouteMap({ ctx, initialHour }: { ctx: DayContext; initia
             <button className={showMap ? 'on' : ''} aria-pressed={showMap} onClick={() => setView('map')}>
               Map
             </button>
-            <button className={!showMap ? 'on' : ''} aria-pressed={!showMap} onClick={() => setView('schematic')}>
+            <button className={view === 'schematic' || (view === 'map' && !showMap) ? 'on' : ''} aria-pressed={view === 'schematic'} onClick={() => setView('schematic')}>
               Schematic
+            </button>
+            <button className={view === 'brts' ? 'on' : ''} aria-pressed={view === 'brts'} onClick={() => setView('brts')}>
+              Janmarg BRTS{relief.length ? ` · ${relief.length} relief` : ''}
             </button>
           </div>
         </div>
@@ -120,7 +125,11 @@ export default function RouteMap({ ctx, initialHour }: { ctx: DayContext; initia
       {view === 'map' && !showMap && (
         <p className="note">{offline ? 'Map offline, showing schematic.' : 'No station coordinates bundled yet (run scripts/fetch-stations.ts), showing schematic.'}</p>
       )}
-      {showMap ? (
+      {view === 'brts' ? (
+        <Suspense fallback={<p className="note">Loading Janmarg…</p>}>
+          <BrtsMap hour={hour} relief={relief} />
+        </Suspense>
+      ) : showMap ? (
         <Suspense fallback={<p className="note">Loading map…</p>}>
           <GeoMap now={now} maxB={day.maxB} onOffline={() => setOffline(true)} />
         </Suspense>
@@ -180,6 +189,7 @@ export default function RouteMap({ ctx, initialHour }: { ctx: DayContext; initia
         </svg>
       </div>
       )}
+      {view !== 'brts' && (
       <div className="legend">
         {LINES.map((l) => (
           <span key={l.id}>
@@ -192,7 +202,8 @@ export default function RouteMap({ ctx, initialHour }: { ctx: DayContext; initia
         {!showMap && <span>Line width = passengers on that link</span>}
         <span>◯ closed (Sabarmati Rly Stn)</span>
       </div>
-      {selected && !showMap && <StationPanel id={selected} now={now} onClose={() => setSelected(null)} />}
+      )}
+      {selected && !showMap && view !== 'brts' && <StationPanel id={selected} now={now} onClose={() => setSelected(null)} />}
     </div>
   )
 }

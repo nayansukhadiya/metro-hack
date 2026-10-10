@@ -62,9 +62,9 @@ export const MODEL = {
   navratriJourneys: { weekday: 12_000, weekend: 18_000 }, // assumption
   rainHeavyMm: 30,
   rainUplift: 0.05, // GMRC counts on heavy-rain days stayed near normal
-  generatorShare: 0.4,
+  generatorShare: 0.4, // share of a normal weekday's trips made to/from listed generators (rest = background)
   thinOnlyOnSpecialDays: true, // ordinary days keep the published timetable unless demand exceeds it
-  peakFill: 0.92, // a normal weekday's busiest hour fills today's best peak service to 92% (link calibration) // share of a normal weekday's trips made to/from listed generators (rest = background)
+  peakFill: 0.92, // a normal weekday's busiest hour fills today's best peak service to 92% (link calibration)
 }
 
 export const ASSUMPTIONS = [

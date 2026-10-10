@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ASSUMPTIONS, MODEL, type CityEvent, type EventType } from './data'
+import { BRTS, metroName, reliefPlan, type Relief } from './brts'
 import { buildContext, computePlan, fmtHour, type Plan } from './engine'
+import { serviceHour } from './flows'
 import { bandLabel, justify, linkLabel, type JustifyResult } from './justify'
 import { APMC_DEPARTURES, LINE, OPERATIONS, SERVICES, type ServiceId } from './network'
 import { fetchRainMm } from './weather'
@@ -8,7 +10,21 @@ import RouteMap from './RouteMap'
 import './App.css'
 
 const iso = (d: Date) => d.toISOString().slice(0, 10)
-const tomorrow = () => iso(new Date(Date.now() + 86_400_000 + 5.5 * 3_600_000))
+const IST = 5.5 * 3_600_000
+const tomorrow = () => iso(new Date(Date.now() + 86_400_000 + IST))
+/** Current date and decimal hour in Ahmedabad. */
+const nowIST = () => {
+  const d = new Date(Date.now() + IST)
+  return { date: iso(d), hour: d.getUTCHours() + d.getUTCMinutes() / 60 }
+}
+function useNow() {
+  const [now, setNow] = useState(nowIST)
+  useEffect(() => {
+    const t = setInterval(() => setNow(nowIST()), 60_000)
+    return () => clearInterval(t)
+  }, [])
+  return now
+}
 const n = (x: number) => x.toLocaleString('en-IN')
 
 function loadEvents(): CityEvent[] {
@@ -27,6 +43,7 @@ export default function App() {
   const [just, setJust] = useState<JustifyResult | null>(null)
   const [busy, setBusy] = useState(false)
   const [line, setLine] = useState<ServiceId>('redYellow')
+  const now = useNow()
 
   useEffect(() => {
     try {
@@ -52,7 +69,16 @@ export default function App() {
   }, [date])
 
   const ctx = useMemo(() => buildContext(date, events, rain), [date, events, rain])
-  const plan = useMemo(() => computePlan(ctx, line), [ctx, line])
+  const plans = useMemo(() => ({ blue: computePlan(ctx, 'blue'), redYellow: computePlan(ctx, 'redYellow') }), [ctx])
+  const plan = plans[line]
+  // surge → Janmarg: hours where even 5-minute trains cannot carry the busiest link
+  const relief = useMemo<Relief[]>(
+    () => (['blue', 'redYellow'] as const).flatMap((sid) => reliefPlan(plans[sid], (h) => serviceHour(ctx, sid, h))),
+    [plans, ctx],
+  )
+  const live = date === now.date
+  const nowHour = now.hour < 5 ? now.hour + 24 : now.hour
+  const liveRow = live ? plan.hours.find((r) => r.hour === Math.floor(nowHour)) : undefined
 
   useEffect(() => {
     let alive = true
@@ -86,7 +112,7 @@ export default function App() {
       <header>
         <p className="eyebrow">PS-04 · No Day Is an Average Day</p>
         <h1>Headway Planner</h1>
-        <p className="sub">APMC ⇄ Mahatma Mandir · tomorrow’s calendar in, headway changes out</p>
+        <p className="sub">Ahmedabad Metro (Blue, Red, Yellow, Violet) + Janmarg BRTS · tomorrow’s calendar in, headway changes and bus relief out</p>
       </header>
 
       <section className="card controls">
@@ -95,6 +121,7 @@ export default function App() {
           <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />
         </label>
         <div className="quick">
+          <button onClick={() => setDate(now.date)}>Today (live)</button>
           <button onClick={() => setDate(tomorrow())}>Tomorrow</button>
           <button onClick={() => setDate('2026-10-26')}>Normal Monday</button>
           <button onClick={() => setDate('2026-10-11')}>Navratri night 1</button>
@@ -135,7 +162,7 @@ export default function App() {
       </section>
 
       <section className="card">
-        <RouteMap key={date} ctx={ctx} initialHour={s.peakHour} />
+        <RouteMap key={date} ctx={ctx} initialHour={live && nowHour >= 6 ? Math.floor(nowHour) : s.peakHour} relief={relief} />
       </section>
 
       <div className="tabs" role="tablist" aria-label="Line to plan">
@@ -169,6 +196,22 @@ export default function App() {
         )}
       </p>
 
+      {live && (
+        <p className="live">
+          <span className="pulse" aria-hidden="true" /> <strong>Live {fmtHour(now.hour)}</strong>
+          {liveRow && (liveRow.recommendedHeadway || liveRow.currentHeadway) ? (
+            <>
+              {' '}
+              · {SERVICES[line].name}: about {n(liveRow.load)} passengers/hour on {linkLabel(liveRow.link)} · running every{' '}
+              {liveRow.currentHeadway ?? '—'} min, plan says {liveRow.recommendedHeadway ?? '—'} min
+              {liveRow.overflow > 0 && <> · <strong>{n(liveRow.overflow)}/h over capacity: Janmarg relief on</strong></>}
+            </>
+          ) : (
+            <> · {SERVICES[line].name}: no service this hour</>
+          )}
+        </p>
+      )}
+
       <section className="stats">
         <Stat label="Peak load, busiest link" value={`${n(s.peakLoad)}/h`} hint={`${fmtHour(s.peakHour)} · ${linkLabel(s.peakLink)}`} />
         <Stat label="Extra trips, each way" value={s.extraTripsPerDirection ? `+${s.extraTripsPerDirection}` : '0'} hint="vs today’s timetable" />
@@ -185,7 +228,15 @@ export default function App() {
           alert={s.fleetShort}
         />
         <Stat label="Left behind today" value={n(s.leftBehindCurrent)} hint="if the normal timetable runs" alert={s.leftBehindCurrent > 500} />
+        <Stat
+          label="Overflow to Janmarg"
+          value={s.peakOverflow ? `${n(s.peakOverflow)}/h` : '0'}
+          hint={s.peakOverflow ? 'even at 5-min trains' : 'metro can carry it all'}
+          alert={s.peakOverflow > 0}
+        />
       </section>
+
+      {relief.length > 0 && <ReliefCard relief={relief} line={line} />}
 
       <section className="card">
         <h3>Demand vs capacity, by hour</h3>
@@ -204,12 +255,14 @@ export default function App() {
         {just?.note && <p className="note">{just.note}</p>}
         <div className="table">
           {plan.bands.map((b) => {
-            const line = just?.lines.find((l) => l.band === bandLabel(b))
+            const text = just?.lines.find((l) => l.band === bandLabel(b))
             return (
-              <div key={b.from} className={`band ${b.change}`}>
+              <div key={b.from} className={`band ${b.change} ${live && nowHour >= b.from && nowHour < b.to ? 'now' : ''}`}>
                 <div className="when">
                   {bandLabel(b)}
                   <small>{linkLabel(b.link)}</small>
+                  {live && nowHour >= b.from && nowHour < b.to && <span className="nowtag">now</span>}
+                  {relief.some((r) => r.service === line && r.from < b.to && r.to > b.from) && <span className="nowtag bus">+ Janmarg</span>}
                 </div>
                 <div className="hw">
                   <span className="now">{b.currentHeadway ? `${b.currentHeadway} min` : 'no service'}</span>
@@ -221,8 +274,8 @@ export default function App() {
                     <span className="muted">Keep as is · {n(b.peakLoad)}/h fits {n(b.currentCapacity)}/h</span>
                   ) : (
                     <>
-                      <p>{line?.en ?? '…'}</p>
-                      {line?.gu && <p className="gu">{line.gu}</p>}
+                      <p>{text?.en ?? '…'}</p>
+                      {text?.gu && <p className="gu">{text.gu}</p>}
                     </>
                   )}
                 </div>
@@ -245,6 +298,51 @@ export default function App() {
         </p>
       </details>
     </div>
+  )
+}
+
+function ReliefCard({ relief, line }: { relief: Relief[]; line: ServiceId }) {
+  const mine = relief.filter((r) => r.service === line)
+  const other = relief.length - mine.length
+  return (
+    <section className="card relief">
+      <div className="row">
+        <h3>🚌 Surge relief with Janmarg BRTS</h3>
+        <span className="badge">{relief.length} route{relief.length > 1 ? 's' : ''}</span>
+      </div>
+      <p className="note">
+        In these hours the metro is full even at 5-minute trains. Extra Janmarg buses run between the BRTS stops next to the overloaded stretch
+        (bus 80 passengers, at most 30 extra buses/hour per corridor; assumptions).
+      </p>
+      {(mine.length ? mine : relief).map((r) => {
+        const inter = r.route.filter((id) => BRTS[id].interchange).map((id) => BRTS[id].name)
+        return (
+          <div key={`${r.service}${r.from}${r.metroTo}`} className="reliefrow">
+            <div className="when">
+              {fmtHour(r.from)}–{fmtHour(r.to)}
+              <small>{SERVICES[r.service].name}</small>
+            </div>
+            <div>
+              <p>
+                <strong>+{r.buses} buses/hour</strong> {BRTS[r.route[0]].name} → {BRTS[r.route[r.route.length - 1]].name} ({r.route.length - 1} stops),
+                linking metro {metroName(r.metroFrom)} → {metroName(r.metroTo)}. Takes {n(r.carried)} of the {n(r.overflow)}{' '}
+                passengers/hour the metro cannot carry
+                {relief.filter((x) => x.service === r.service && x.from === r.from).length > 1 ? ' together with the other corridor' : ''}
+                {r.carried < r.overflow && relief.filter((x) => x.service === r.service && x.from === r.from).reduce((a, x) => a + x.carried, 0) < r.overflow
+                  ? '; the rest wait for the next trains'
+                  : ''}
+                .
+              </p>
+              <p className="muted">
+                Why: {r.why}
+                {inter.length ? ` · via ${inter.join(', ')}` : ''}
+              </p>
+            </div>
+          </div>
+        )
+      })}
+      {mine.length > 0 && other > 0 && <p className="muted">+ {other} more on the other line tab.</p>}
+    </section>
   )
 }
 

@@ -208,3 +208,11 @@ export const OPERATIONS: Record<ServiceId, { cycleFullMin: number; cycleShortTur
   // 39 min end to end (assumed 33 km/h); 18 trainsets assumed
   blue: { cycleFullMin: 88, cycleShortTurnMin: null, shortTurn: null, fleet: 18 },
 }
+
+/** Stations in travel order for the line segment that contains both a and b (Red+Yellow spine or Violet spur). */
+export function serviceOrder(sid: ServiceId, a: string, b: string): string[] {
+  if (sid === 'blue') return LINE.blue.stations.map((s) => s.id)
+  const spine = [...LINE.red.stations, ...LINE.yellow.stations.slice(1)].map((s) => s.id)
+  if (spine.includes(a) && spine.includes(b)) return spine
+  return LINE.violet.stations.map((s) => s.id)
+}
