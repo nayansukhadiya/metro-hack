@@ -3,6 +3,7 @@ import { ASSUMPTIONS, MODEL, type CityEvent, type EventType } from './data'
 import { buildContext, computePlan, fmtHour, type Plan } from './engine'
 import { bandLabel, justify, type JustifyResult } from './justify'
 import { fetchRainMm } from './weather'
+import RouteMap from './RouteMap'
 import './App.css'
 
 const iso = (d: Date) => d.toISOString().slice(0, 10)
@@ -128,6 +129,10 @@ export default function App() {
           {rain != null && rain >= MODEL.rainHeavyMm && <span className="chip rain">Heavy rain {rain} mm</span>}
         </div>
         <EventForm date={date} onAdd={(e) => setEvents((ev) => [...ev, e])} onMatch={addMatch} />
+      </section>
+
+      <section className="card">
+        <RouteMap key={date} ctx={plan.ctx} initialHour={s.peakHour} />
       </section>
 
       <section className="stats">

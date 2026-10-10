@@ -97,3 +97,22 @@ summary { cursor: pointer; font-weight: 600; }
   .band { grid-template-columns: 1fr; gap: 4px; }
   h1 { font-size: 24px; }
 }
+.routemap { display: grid; gap: 8px; }
+.routemap h3 { margin: 0; }
+.slider { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.slider input { width: min(320px, 55vw); padding: 0; }
+.mapscroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.mapscroll svg { width: 100%; min-width: 760px; height: auto; display: block; }
+.stn { cursor: pointer; outline: none; }
+.stn .dot, .stn .ring { stroke: var(--card); stroke-width: 1.5; }
+.stn .ring { stroke: var(--ink); stroke-width: 2; }
+.stn .closed { fill: var(--card); stroke: #9aa0a6; stroke-width: 1.5; }
+.stn.sel .dot, .stn.sel .ring, .stn:focus-visible .dot, .stn:focus-visible .ring { stroke: var(--ink); stroke-width: 3; }
+.stnlabel { font-size: 10px; fill: var(--ink); }
+.stnlabel.muted { fill: var(--muted); }
+.stn.sel .stnlabel { font-weight: 700; }
+.sw.heat { width: 40px; background: linear-gradient(90deg, rgb(154,160,166), rgb(251,140,0), rgb(211,47,47)); }
+.stnpanel { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+.stnpanel p { margin: 4px 0; }
+.stnpanel ul { margin: 4px 0 0; }
+.stnpanel button { padding: 2px 8px; }

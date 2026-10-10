@@ -89,7 +89,8 @@ function roundHeadway(maxMinutes: number): number {
   return ok.length ? Math.max(...ok) : MODEL.minHeadway
 }
 
-export function computePlan(ctx: DayContext): Plan {
+/** Day-level demand: which calendar rules apply, hourly shape and network journeys for the day. */
+export function dayModel(ctx: DayContext) {
   const holiday = ctx.calendar.find((c) => c.kind === 'holiday')
   const lowTravel = ctx.calendar.find((c) => c.kind === 'low-travel')
   const festivalNight = ctx.calendar.find((c) => c.kind === 'festival-night')
@@ -102,8 +103,19 @@ export function computePlan(ctx: DayContext): Plan {
       : MODEL.dayFactor[ctx.dayType]
   const share = workingDay ? weekdayShare : holidayShare
   const rainy = ctx.rainMm != null && ctx.rainMm >= MODEL.rainHeavyMm
-  const daily =
-    MODEL.networkDailyJourneys * MODEL.corridorShare * dayFactor * (rainy ? 1 + MODEL.rainUplift : 1)
+  const networkDaily = MODEL.networkDailyJourneys * dayFactor * (rainy ? 1 + MODEL.rainUplift : 1)
+  return { holiday, lowTravel, festivalNight, workingDay, share, rainy, networkDaily }
+}
+
+/** Extra journeys per festival night (corridor figure from MODEL; other festivals 10k). */
+export function festivalJourneys(ctx: DayContext, name: string): number {
+  const weekend = ctx.weekday === 0 || ctx.weekday === 5 || ctx.weekday === 6
+  return name.startsWith('Navratri') ? (weekend ? MODEL.navratriJourneys.weekend : MODEL.navratriJourneys.weekday) : 10_000
+}
+
+export function computePlan(ctx: DayContext): Plan {
+  const { holiday, lowTravel, festivalNight, workingDay, share, rainy, networkDaily } = dayModel(ctx)
+  const daily = networkDaily * MODEL.corridorShare
   const linkFactor = MODEL.peakDirectionShare * MODEL.busiestLinkShare
 
   // the timetable that would run today (holidays run the Sunday pattern)
@@ -155,10 +167,7 @@ export function computePlan(ctx: DayContext): Plan {
     }
 
     if (festivalNight) {
-      const weekend = ctx.weekday === 0 || ctx.weekday === 5 || ctx.weekday === 6
-      const g = festivalNight.name.startsWith('Navratri')
-        ? weekend ? MODEL.navratriJourneys.weekend : MODEL.navratriJourneys.weekday
-        : 10_000
+      const g = festivalJourneys(ctx, festivalNight.name)
       const out: Record<number, number> = { 19: 0.3, 20: 0.5, 21: 0.2 }
       const back: Record<number, number> = { 23: 0.35, 24: 0.45, 25: 0.2 }
       if (out[h]) {
