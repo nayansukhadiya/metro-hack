@@ -3,8 +3,9 @@ import { ASSUMPTIONS, MODEL, type CityEvent, type EventType } from './data'
 import { BRTS, metroName, reliefPlan, type Relief } from './brts'
 import { buildContext, computePlan, fmtHour, type Plan } from './engine'
 import { serviceHour } from './flows'
-import { bandLabel, justify, linkLabel, type JustifyResult } from './justify'
-import { APMC_DEPARTURES, LINE, OPERATIONS, SERVICES, type ServiceId } from './network'
+import { bandLabel, buildOverview, justify, linkLabel, type DayOverview, type JustifyResult } from './justify'
+import { APMC_DEPARTURES, LINE, OPERATIONS, SERVICES, SOURCES, type ServiceId } from './network'
+import { controlRoomText, copyText } from './report'
 import { fetchRainMm } from './weather'
 import RouteMap from './RouteMap'
 import './App.css'
@@ -80,11 +81,20 @@ export default function App() {
   const nowHour = now.hour < 5 ? now.hour + 24 : now.hour
   const liveRow = live ? plan.hours.find((r) => r.hour === Math.floor(nowHour)) : undefined
 
+  // both lines and Janmarg relief, for the one-line day summary
+  const overview = useMemo<DayOverview>(() => buildOverview(date, plans, relief), [date, plans, relief])
+  const [copied, setCopied] = useState<'idle' | 'ok' | 'fail'>('idle')
+  const copyPlan = async () => {
+    const ok = await copyText(controlRoomText(plan, overview, just, relief))
+    setCopied(ok ? 'ok' : 'fail')
+    setTimeout(() => setCopied('idle'), 2500)
+  }
+
   useEffect(() => {
     let alive = true
     setBusy(true)
     const t = setTimeout(() => {
-      justify(plan).then((r) => {
+      justify(plan, overview).then((r) => {
         if (alive) {
           setJust(r)
           setBusy(false)
@@ -95,7 +105,7 @@ export default function App() {
       alive = false
       clearTimeout(t)
     }
-  }, [plan])
+  }, [plan, overview])
 
   const addMatch = () =>
     setEvents((ev) => [
@@ -196,6 +206,14 @@ export default function App() {
         )}
       </p>
 
+      {just && (
+        <section className="daysummary" aria-live="polite">
+          <span className="label">Day summary{just.provider === 'gemini' ? ' · Gemini, numbers checked' : ''}</span>
+          <p>{just.summary.en}</p>
+          {just.summary.gu && <p className="gu">{just.summary.gu}</p>}
+        </section>
+      )}
+
       {live && (
         <p className="live">
           <span className="pulse" aria-hidden="true" /> <strong>Live {fmtHour(now.hour)}</strong>
@@ -245,12 +263,17 @@ export default function App() {
 
       <section className="card">
         <div className="row">
-          <h3>Recommended changes</h3>
-          {just && (
-            <span className={`badge ${just.provider}`}>
-              {busy ? 'updating…' : just.provider === 'gemini' ? 'Written by Gemini · numbers checked' : 'Template'}
-            </span>
-          )}
+          <h3>Recommended changes · {SERVICES[line].name}</h3>
+          <div className="actions">
+            {just && (
+              <span className={`badge ${just.provider}`}>
+                {busy ? 'updating…' : just.provider === 'gemini' ? 'Written by Gemini · numbers checked' : 'Template'}
+              </span>
+            )}
+            <button className="primary" onClick={copyPlan} disabled={busy}>
+              {copied === 'ok' ? 'Copied ✓' : copied === 'fail' ? 'Copy failed' : 'Copy for control room'}
+            </button>
+          </div>
         </div>
         {just?.note && <p className="note">{just.note}</p>}
         <div className="table">
@@ -297,6 +320,14 @@ export default function App() {
           event-day fare revenue. GMRC keeps the data. It never touches signalling.
         </p>
       </details>
+
+      <footer className="footer">
+        <p>
+          <strong>Data sources:</strong> {SOURCES} · Janmarg BRTS route map (Ahmedabad Janmarg Ltd) · Open-Meteo forecast · map tiles © OpenStreetMap
+          contributors.
+        </p>
+        <p>Office and college timings, sizes and metro shares marked “assumed” are estimates; the plan is advice for operators and never touches signalling.</p>
+      </footer>
     </div>
   )
 }

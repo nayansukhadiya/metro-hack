@@ -2,7 +2,8 @@
 import { MODEL, type CityEvent } from '../src/data.ts'
 import { buildContext, computePlan, fmtHour } from '../src/engine.ts'
 import { serviceHour } from '../src/flows.ts'
-import { templateLines } from '../src/justify.ts'
+import { reliefPlan } from '../src/brts.ts'
+import { buildOverview, factsFor, templateLines, templateSummary, validate } from '../src/justify.ts'
 import type { ServiceId } from '../src/network.ts'
 
 let failed = 0
@@ -84,6 +85,23 @@ check(
   'normal Monday bands name the generators driving them',
 )
 console.log(`\n${lines.length} template lines, e.g.: ${lines[0]?.en ?? '—'}`)
+
+// ---- Phase C: day summary, Gujarati, number check ----
+{
+  const ctx = buildContext(MONDAY, [match], null)
+  const plans = { blue: computePlan(ctx, 'blue'), redYellow: computePlan(ctx, 'redYellow') }
+  const relief = (['blue', 'redYellow'] as const).flatMap((sid) => reliefPlan(plans[sid], (h) => serviceHour(ctx, sid, h)))
+  const overview = buildOverview(MONDAY, plans, relief)
+  const summary = templateSummary(overview)
+  const facts = factsFor(plans.redYellow, overview)
+  const lines = templateLines(plans.redYellow)
+  check(/02:00/.test(summary.en) && /Janmarg/.test(summary.en), `match-night summary names the 02:00 extension and Janmarg: "${summary.en.slice(0, 90)}…"`)
+  check(lines.every((l) => !!l.gu) && !!summary.gu, 'every template line and the summary have Gujarati')
+  check(validate([summary, ...lines], facts), 'template summary and lines pass the number check')
+  check(!validate([{ en: 'Add 999 buses.' }], facts), 'a summary with an invented number is rejected')
+  const normal = templateSummary(buildOverview(MONDAY, { blue: computePlan(buildContext(MONDAY, [], null), 'blue'), redYellow: computePlan(buildContext(MONDAY, [], null), 'redYellow') }, []))
+  console.log(`   normal Monday summary: ${normal.en}`)
+}
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed')
 process.exit(failed ? 1 : 0)

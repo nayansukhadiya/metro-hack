@@ -154,3 +154,11 @@ summary { cursor: pointer; font-weight: 600; }
 .sw.dashed { height: 0; border-top: 3px dashed #1f3a68; }
 .brtslink { margin: 2px 0; }
 @media (max-width: 600px) { .reliefrow { grid-template-columns: 1fr; gap: 4px; } }
+.daysummary { background: var(--ink); color: var(--card); border-radius: 12px; padding: 12px 14px; display: grid; gap: 4px; }
+.daysummary .label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; opacity: .7; }
+.daysummary p { margin: 0; font-size: 16px; font-weight: 600; line-height: 1.4; }
+.daysummary .gu { font-size: 14px; font-weight: 400; opacity: .85; }
+.actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.actions button:disabled { opacity: .6; cursor: progress; }
+.footer { font-size: 12px; color: var(--muted); line-height: 1.5; border-top: 1px solid var(--line); padding-top: 10px; }
+.footer p { margin: 0 0 4px; }
