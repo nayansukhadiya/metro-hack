@@ -138,7 +138,7 @@ export function templateLines(plan: Plan): Justification[] {
           en = `Relax to every ${b.recommendedHeadway} min (now ${b.currentHeadway}). Only about ${load} passengers/hour expected, so trains would run under 60% full. Why: ${why}.`
           break
         case 'extend':
-          en = `Keep running every ${b.recommendedHeadway} min past the usual last train. About ${load} passengers/hour still expected. Why: ${why}.`
+          en = `Keep running every ${b.recommendedHeadway} min past the usual last train. About ${load} passengers/hour still expected${queued ? `, plus ${queued.toLocaleString('en-IN')} still queued from the hour before` : ''}. Why: ${why}.`
           break
         case 'start-early':
           en = `Start service early, every ${b.recommendedHeadway} min. About ${load} passengers/hour expected. Why: ${why}.`

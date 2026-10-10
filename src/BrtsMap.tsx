@@ -3,7 +3,7 @@ import { BRTS, BRTS_PATHS, BRTS_STOPS, METRO_LINKS, metroName, type Relief } fro
 import { fmtHour } from './engine'
 import { LINE, STATIONS } from './network'
 
-const NAVY = '#1f3a68'
+const NAVY = 'var(--brts-line)'
 
 // label placement like the printed map: left of the main vertical corridors, tilted above stops on busy rows
 const rowCount: Record<number, number> = {}
@@ -41,7 +41,7 @@ export default function BrtsMap({ hour, relief }: { hour: number; relief: Relief
             <polyline
               key={i}
               points={p.stops.map((s) => `${BRTS[s].x},${BRTS[s].y}`).join(' ')}
-              stroke={NAVY}
+              style={{ stroke: NAVY }}
               strokeWidth={4}
               strokeDasharray={p.ext ? '6 6' : undefined}
               fill="none"
@@ -82,7 +82,7 @@ export default function BrtsMap({ hour, relief }: { hour: number; relief: Relief
                 {s.interchange ? (
                   <rect x={s.x - 8} y={s.y - 8} width={16} height={16} rx={2} fill="#4f7cc4" stroke={ORANGE} strokeWidth={3} />
                 ) : (
-                  <circle cx={s.x} cy={s.y} r={6.5} fill={onRoute.has(s.id) ? ORANGE : '#4f7cc4'} stroke={NAVY} strokeWidth={1.5} />
+                  <circle cx={s.x} cy={s.y} r={6.5} fill={onRoute.has(s.id) ? ORANGE : '#4f7cc4'} style={{ stroke: NAVY }} strokeWidth={1.5} />
                 )}
                 {labelled(s.id) && (
                   <text

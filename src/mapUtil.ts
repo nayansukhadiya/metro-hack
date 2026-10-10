@@ -26,3 +26,13 @@ export function heat(t: number): string {
 }
 
 export const boardingsAt = (now: HourData, id: string) => (now.blue.boardings[id] ?? 0) + (now.redYellow.boardings[id] ?? 0)
+
+export const FIRST_HOUR = 6
+export const LAST_HOUR = 25 // 01:00–02:00
+
+/** Boardings and link loads for every hour of the day on both services, plus the day's maxima for scaling. */
+export interface NetworkDay {
+  hours: Record<number, HourData>
+  maxB: number
+  maxL: number
+}

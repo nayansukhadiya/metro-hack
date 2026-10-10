@@ -199,6 +199,7 @@ export interface Relief {
   metroTo: string
   route: string[] // BRTS stop ids
   overflow: number // passengers/hour the metro cannot carry
+  link: { from: string; to: string } // the overloaded metro stretch, in travel direction
   buses: number // extra buses per hour
   carried: number // passengers/hour those buses can take
   why: string
@@ -249,7 +250,7 @@ export function reliefPlan(plan: Plan, flows: (h: number) => { boardings: Record
         prev.carried = Math.max(prev.carried, share)
         continue
       }
-      out.push({ service: plan.service, from: r.hour, to: r.hour + 1, metroFrom: origin, metroTo: t, route, overflow: r.overflow, buses, carried: share, why })
+      out.push({ service: plan.service, from: r.hour, to: r.hour + 1, metroFrom: origin, metroTo: t, route, overflow: r.overflow, link: r.link, buses, carried: share, why })
     }
   }
   return out
