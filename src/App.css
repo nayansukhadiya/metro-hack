@@ -29,7 +29,7 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); }
-.app { max-width: 960px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 14px; }
+.app { max-width: 1040px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 14px; }
 h1 { margin: 2px 0 4px; font-size: 28px; letter-spacing: -0.02em; }
 h2 { margin: 0 0 8px; font-size: 18px; }
 h3 { margin: 0 0 10px; font-size: 15px; }
@@ -55,7 +55,7 @@ input, select { background: var(--bg); border: 1px solid var(--line); border-rad
 .eventform { display: flex; flex-wrap: wrap; gap: 8px; }
 .eventform form { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
 .eventform form input[type='number'] { width: 100px; }
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
 .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 2px; }
 .stat .label { font-size: 12px; color: var(--muted); }
 .stat .value { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }

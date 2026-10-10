@@ -14,6 +14,11 @@ export interface JustifyResult {
 }
 
 export const bandLabel = (b: Band) => `${fmtHour(b.from)}–${fmtHour(b.to)}`
+/** Events, holidays and rain first, then the generators; at most three reasons. */
+export const topDrivers = (drivers: string[]) => {
+  const generator = (d: string) => /\((arrive|leave|all day)/.test(d)
+  return [...drivers.filter((d) => !generator(d)), ...drivers.filter(generator)].slice(0, 3)
+}
 export const linkLabel = (l: { from: string; to: string }) => `${STATIONS[l.from]?.name ?? l.from} → ${STATIONS[l.to]?.name ?? l.to}`
 
 /** The only facts the language model may use. Numbers it writes are checked against these. */
@@ -39,7 +44,7 @@ export function factsFor(plan: Plan) {
         busiestLink: linkLabel(b.link),
         currentCapacityPerHour: b.currentCapacity,
         newCapacityPerHour: b.recommendedCapacity,
-        drivers: b.drivers,
+        drivers: topDrivers(b.drivers),
       })),
   }
 }
@@ -48,7 +53,7 @@ export function templateLines(plan: Plan): Justification[] {
   return plan.bands
     .filter((b) => b.change !== 'same')
     .map((b) => {
-      const why = b.drivers.length ? b.drivers.join('; ') : 'normal demand'
+      const why = b.drivers.length ? topDrivers(b.drivers).join('; ') : 'normal demand'
       const load = b.peakLoad.toLocaleString('en-IN')
       const queued = Math.max(0, b.peakNeed - b.peakLoad)
       const link = linkLabel(b.link)

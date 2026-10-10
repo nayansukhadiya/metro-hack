@@ -161,7 +161,7 @@ export function lineDemand(ctx: DayContext, sid: ServiceId): DemandHour[] {
 }
 
 export const generatorLabel = (g: Generator, dir: 'in' | 'out') =>
-  `${g.name}: ${dir === 'in' ? g.inVerb : g.outVerb} (${g.type === 'hub' ? 'all day' : `${dir === 'in' ? 'arrive' : 'leave'} ${windowLabel(dir === 'in' ? g.arrive : g.leave)}`}${g.note && g.type !== 'hub' ? `; ${g.note}` : ''})`
+  `${g.name}: ${dir === 'in' ? g.inVerb : g.outVerb} (${g.type === 'hub' ? (g.note ?? 'all day') : `${dir === 'in' ? 'arrive' : 'leave'} ${windowLabel(dir === 'in' ? g.arrive : g.leave)}`})`
 
 export interface ServiceHour {
   service: ServiceId

@@ -86,7 +86,7 @@ export const GENERATORS: Generator[] = [
   },
   {
     id: 'kalupur', station: 'Kalupur', type: 'hub', name: 'Ahmedabad railway station (Kalupur)', size: 40000, metroShare: 0.05,
-    arrive: [6, 9], leave: [19, 23], allDay: 0.5, days: 'all', inVerb: 'train passengers (morning arrivals)', outVerb: 'train passengers (evening departures)', source: 'assumed',
+    arrive: [6, 9], leave: [19, 23], allDay: 0.5, days: 'all', inVerb: 'rail passengers to and from trains', outVerb: 'rail passengers to and from trains', source: 'assumed',
     note: 'all day, peaks 06–09 and 19–23',
   },
   {
