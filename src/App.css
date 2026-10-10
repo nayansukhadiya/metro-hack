@@ -128,3 +128,7 @@ summary { cursor: pointer; font-weight: 600; }
 .stninfo ul { margin: 2px 0 0; padding-left: 18px; }
 .leaflet-popup-content { margin: 10px 12px; min-width: 220px; }
 @media (max-width: 600px) { .geomap { height: 340px; } }
+.stninfo ul.gens { list-style: none; padding: 0; display: grid; gap: 6px; }
+.tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 99px; border: 1px solid var(--line); }
+.tag.verified { color: var(--ok); border-color: var(--ok); }
+.tag.assumed { color: var(--muted); }

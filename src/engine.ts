@@ -1,4 +1,5 @@
 import { CALENDAR, CURRENT_HEADWAY, MODEL, type CalendarDay, type CityEvent } from './data'
+import { lineDemand } from './flows'
 
 export interface DayContext {
   date: string
@@ -62,7 +63,8 @@ const norm = (p: Record<number, number>) => {
   return (h: number) => (p[h] ?? 0) / s
 }
 const weekdayShare = norm(WEEKDAY_PROFILE)
-const holidayShare = norm(HOLIDAY_PROFILE)
+/** Flat holiday curve, also the shape of background (non-generator) trips every day. */
+export const holidayShare = norm(HOLIDAY_PROFILE)
 
 export function fmtHour(h: number): string {
   const hh = Math.floor(h) % 24
@@ -114,8 +116,9 @@ export function festivalJourneys(ctx: DayContext, name: string): number {
 }
 
 export function computePlan(ctx: DayContext): Plan {
-  const { holiday, lowTravel, festivalNight, workingDay, share, rainy, networkDaily } = dayModel(ctx)
-  const daily = networkDaily * MODEL.corridorShare
+  const { holiday, lowTravel, festivalNight, workingDay, rainy } = dayModel(ctx)
+  // hourly shape and reasons come from the generators on Red+Yellow (APMC ⇄ Mahatma Mandir)
+  const demand = lineDemand(ctx, 'redYellow')
   const linkFactor = MODEL.peakDirectionShare * MODEL.busiestLinkShare
 
   // the timetable that would run today (holidays run the Sunday pattern)
@@ -129,10 +132,10 @@ export function computePlan(ctx: DayContext): Plan {
 
   for (let h = 5; h <= 26; h++) {
     const drivers: string[] = []
-    let load = daily * share(h) * linkFactor
+    let load = demand[h].journeys * linkFactor
     let crush = false
 
-    if (workingDay && ((h >= 8 && h < 11) || (h >= 17 && h < 20))) drivers.push('office and college peak')
+    drivers.push(...demand[h].drivers)
     if (holiday) drivers.push(`${holiday.name} holiday: no commute peak`)
     if (lowTravel) drivers.push(`${lowTravel.name}: very low travel`)
     if (rainy && load > 0) drivers.push(`heavy rain forecast (${ctx.rainMm} mm)`)

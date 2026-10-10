@@ -76,6 +76,7 @@ export const MODEL = {
   cycleFullMin: 166, // APMC→Mahatma Mandir 78 min ×2 + 2×5 turnaround (GMRC timetable)
   cycleShortTurnMin: 74, // APMC⇄Motera 32 min ×2 + 2×5
   corridorFleet: 14, // assumed trainsets allocated to this corridor
+  generatorShare: 0.4, // share of a normal weekday's trips made to/from listed generators (rest = background)
 }
 
 export const ASSUMPTIONS = [
@@ -86,5 +87,6 @@ export const ASSUMPTIONS = [
   'Stadium: 30% of spectators use the metro (fitted to the IPL final, 31 May 2026: +66% journeys).',
   'Navratri: 12k (weekday) / 18k (weekend) extra corridor journeys, out 7–10 PM, back 11 PM–2 AM.',
   'Heavy rain (≥30 mm): +5% only — GMRC counts on rain days stayed near normal.',
+  'Generators (offices, colleges, hubs, industry, temples) set when and where trips happen; they carry 60% of a normal weekday, background trips on a flat curve fill each day to its total.',
   'Shortest headway 5 min; 14 trainsets for this corridor. Short-turn APMC⇄Motera when fleet runs short.',
 ]
