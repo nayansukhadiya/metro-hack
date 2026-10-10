@@ -1,5 +1,5 @@
 // Sanity checks for the planner. Run: npx tsx scripts/sanity.ts  (exits 1 on any failure)
-import type { CityEvent } from '../src/data.ts'
+import { MODEL, type CityEvent } from '../src/data.ts'
 import { buildContext, computePlan, fmtHour } from '../src/engine.ts'
 import { serviceHour } from '../src/flows.ts'
 import { templateLines } from '../src/justify.ts'
@@ -15,29 +15,35 @@ const MONDAY = '2026-10-26'
 const SUNDAY = '2026-10-25'
 const match: CityEvent = { id: 'm', date: MONDAY, type: 'stadium', name: 'Cricket match at Motera', attendance: 110000, start: 19.5, end: 23.25 }
 
-// ---- plan (Red+Yellow corridor) ----
-const plan = (date: string, events: CityEvent[] = []) => computePlan(buildContext(date, events, null))
+// ---- plans, both lines ----
+const plan = (date: string, sid: ServiceId, events: CityEvent[] = []) => computePlan(buildContext(date, events, null), sid)
 const show = (label: string, p: ReturnType<typeof plan>) => {
-  console.log(`\n## ${label}: peak ${p.summary.peakLoad}/h at ${fmtHour(p.summary.peakHour)}, last train ${p.summary.lastTrain ? fmtHour(p.summary.lastTrain) : '—'}`)
+  console.log(`\n## ${p.service} · ${label}: peak ${p.summary.peakLoad}/h at ${fmtHour(p.summary.peakHour)}, last train ${p.summary.lastTrain ? fmtHour(p.summary.lastTrain) : '—'}, overflow ${p.summary.peakOverflow}/h`)
   for (const b of p.bands)
-    console.log(`  ${fmtHour(b.from)}–${fmtHour(b.to)}  ${b.currentHeadway ?? '-'} → ${b.recommendedHeadway ?? '-'}  ${b.change.padEnd(11)} ${b.peakLoad}/h  ${b.drivers.join('; ')}`)
+    console.log(`  ${fmtHour(b.from)}–${fmtHour(b.to)}  ${b.currentHeadway ?? '-'} → ${b.recommendedHeadway ?? '-'}  ${b.change.padEnd(11)} ${b.peakLoad}/h  ${b.drivers.slice(0, 2).join('; ').slice(0, 110)}`)
 }
 
-const monday = plan(MONDAY)
-show('Normal Monday', monday)
-const changes = monday.bands.filter((b) => b.change !== 'same')
-check(changes.length <= 1, `normal Monday: few/no changes (${changes.length})`)
+for (const sid of ['blue', 'redYellow'] as const) {
+  const monday = plan(MONDAY, sid)
+  show('Normal Monday', monday)
+  // demand-driven changes; Red+Yellow bands that only lift a 20–60 min real timetable to the 15-min standard are not counted
+  const driven = monday.bands.filter((b) => b.change !== 'same' && !(b.change === 'more' && b.recommendedHeadway === MODEL.maxHeadway))
+  check(driven.length <= 1, `${sid} normal Monday: few/no demand-driven changes (${driven.length})`)
+  check(monday.summary.peakOverflow === 0, `${sid} normal Monday: no overflow`)
 
-const navratri = plan('2026-10-11')
-show('Navratri night 1', navratri)
-check((navratri.summary.lastTrain ?? 0) >= 25, `Navratri night 1 extends to ~02:00 (last train ${fmtHour(navratri.summary.lastTrain ?? 0)})`)
+  const navratri = plan('2026-10-11', sid)
+  show('Navratri night 1', navratri)
+  check((navratri.summary.lastTrain ?? 0) >= 25, `${sid} Navratri night 1 extends to ~02:00 (last train ${fmtHour(navratri.summary.lastTrain ?? 0)})`)
 
-const matchNight = plan(MONDAY, [match])
-show('Monday + cricket match', matchNight)
-check((matchNight.summary.lastTrain ?? 0) >= 25, `match night extends to ~02:00 (last train ${fmtHour(matchNight.summary.lastTrain ?? 0)})`)
-
-const sunday = plan(SUNDAY)
-show('Sunday', sunday)
+  const matchNight = plan(MONDAY, sid, [match])
+  show('Monday + cricket match', matchNight)
+  check((matchNight.summary.lastTrain ?? 0) >= 25, `${sid} match night extends to ~02:00 (last train ${fmtHour(matchNight.summary.lastTrain ?? 0)})`)
+  if (sid === 'redYellow') check(matchNight.summary.peakOverflow > 0, `match night overflows even at 5 min (${matchNight.summary.peakOverflow}/h) → BRTS relief`)
+}
+{
+  const ry = plan(MONDAY, 'redYellow')
+  check(ry.summary.currentBestHeadway === 15, `finding: real Red+Yellow timetable peaks at every ${ry.summary.currentBestHeadway} min (assumed 12)`)
+}
 
 // ---- generators: when and where ----
 const hours = Array.from({ length: 18 }, (_, i) => i + 6)
@@ -70,10 +76,11 @@ for (const [sid, st] of [
 }
 
 // ---- justifications name generators ----
-const lines = templateLines(monday).concat(templateLines(navratri))
+const mondayRY = plan(MONDAY, 'redYellow')
+const lines = templateLines(mondayRY)
 const named = /Sachivalaya|GIFT City|Infocity|University|offices|college|railway/i
 check(
-  monday.bands.some((b) => b.drivers.some((d) => named.test(d))),
+  mondayRY.bands.some((b) => b.drivers.some((d) => named.test(d))),
   'normal Monday bands name the generators driving them',
 )
 console.log(`\n${lines.length} template lines, e.g.: ${lines[0]?.en ?? '—'}`)

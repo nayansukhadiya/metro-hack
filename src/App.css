@@ -132,3 +132,9 @@ summary { cursor: pointer; font-weight: 600; }
 .tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 99px; border: 1px solid var(--line); }
 .tag.verified { color: var(--ok); border-color: var(--ok); }
 .tag.assumed { color: var(--muted); }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+.tabs button { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; padding: 8px 14px; border-radius: 99px; background: var(--card); }
+.tabs button.on { background: var(--ink); color: var(--card); border-color: var(--ink); }
+.dotline { display: inline-block; width: 10px; height: 10px; border-radius: 99px; }
+.finding { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); font-size: 14px; line-height: 1.45; }
+.when small { display: block; font-weight: 400; font-size: 11px; color: var(--muted); margin-top: 2px; }

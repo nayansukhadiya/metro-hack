@@ -177,3 +177,34 @@ export const APMC_DEPARTURES = [
 ]
 
 export const SOURCES = 'GMRC timetable 18 May 2026 · GMRC station list and on-train route map · GMRC ridership press data (2025–26)'
+
+export type DayPattern = 'weekday' | 'saturday' | 'sunday'
+
+const departuresByHour: Record<number, number> = {}
+for (const t of APMC_DEPARTURES) {
+  const h = Number(t.slice(0, 2))
+  departuresByHour[h] = (departuresByHour[h] ?? 0) + 1
+}
+
+/**
+ * Today's service as headway (min) for the hour starting at h, or null = no train.
+ * Red+Yellow: real APMC departures (one published timetable, used for every day).
+ * Blue: GMRC Jul 2025 — 7 min peak (8–11, 17–20) / 10 off-peak; Sundays and holidays 10 / 12.
+ */
+export function currentHeadway(sid: ServiceId, pattern: DayPattern, h: number): number | null {
+  if (sid === 'redYellow') {
+    const n = departuresByHour[h] ?? 0
+    return n ? Math.round(60 / n) : null
+  }
+  const peak = (h >= 8 && h < 11) || (h >= 17 && h < 20)
+  if (pattern === 'sunday') return h < 8 || h >= 22 ? null : peak ? 10 : 12
+  return h < 6 || h >= 23 ? null : peak ? 7 : 10
+}
+
+/** Fleet and turnaround per service (cycle = end to end and back incl. 2 × 5 min turnaround). */
+export const OPERATIONS: Record<ServiceId, { cycleFullMin: number; cycleShortTurnMin: number | null; shortTurn: string | null; fleet: number }> = {
+  // APMC→Mahatma Mandir 78 min (GMRC timetable); short-turn APMC⇄Motera 32 min; 14 trainsets assumed
+  redYellow: { cycleFullMin: 166, cycleShortTurnMin: 74, shortTurn: 'APMC⇄Motera', fleet: 14 },
+  // 39 min end to end (assumed 33 km/h); 18 trainsets assumed
+  blue: { cycleFullMin: 88, cycleShortTurnMin: null, shortTurn: null, fleet: 18 },
+}

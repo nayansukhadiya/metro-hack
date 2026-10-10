@@ -178,7 +178,11 @@ export interface ServiceHour {
   crush: boolean
 }
 
-export function serviceHour(ctx: DayContext, sid: ServiceId, h: number): ServiceHour {
+/**
+ * One hour on one service. `baseLinkScale` scales ordinary (non-event) link loads only — the planner's
+ * calibration; boardings are never scaled.
+ */
+export function serviceHour(ctx: DayContext, sid: ServiceId, h: number, baseLinkScale = 1): ServiceHour {
   const g = GRAPHS[sid]
   const m = dayModel(ctx)
   const svc = SERVICES[sid]
@@ -186,7 +190,9 @@ export function serviceHour(ctx: DayContext, sid: ServiceId, h: number): Service
   const W = open.reduce((a, s) => a + weightOf(s), 0)
   const boardings: Record<string, number> = Object.fromEntries(g.nodes.map((s) => [s, 0]))
   const alightings: Record<string, number> = Object.fromEntries(g.nodes.map((s) => [s, 0]))
-  const slots = new Float64Array(g.edges.length * 2)
+  const baseSlots = new Float64Array(g.edges.length * 2)
+  const eventSlots = new Float64Array(g.edges.length * 2)
+  let slots = baseSlots
   const stationDrivers: Record<string, string[]> = {}
   const drivers: string[] = []
   let crush = false
@@ -222,6 +228,7 @@ export function serviceHour(ctx: DayContext, sid: ServiceId, h: number): Service
     if (peakish) why(t.station, generatorLabel(t.g, t.inbound >= t.outbound ? 'in' : 'out'))
   }
   drivers.push(...base.drivers)
+  slots = eventSlots // everything below is event demand
   if (m.holiday) drivers.push(`${m.holiday.name} holiday: no commute peak`)
   if (m.lowTravel) drivers.push(`${m.lowTravel.name}: very low travel`)
   if (m.rainy && journeys > 0) drivers.push(`heavy rain forecast (${ctx.rainMm} mm)`)
@@ -297,7 +304,8 @@ export function serviceHour(ctx: DayContext, sid: ServiceId, h: number): Service
     }
   }
 
-  const links = g.edges.map((_, i) => [slots[i * 2], slots[i * 2 + 1]] as [number, number])
+  const link = (k: number) => baseSlots[k] * baseLinkScale + eventSlots[k]
+  const links = g.edges.map((_, i) => [link(i * 2), link(i * 2 + 1)] as [number, number])
   let best = { edge: g.edges[0], dir: 'fwd' as 'fwd' | 'rev', load: 0 }
   links.forEach(([f, r], i) => {
     if (f > best.load) best = { edge: g.edges[i], dir: 'fwd', load: f }

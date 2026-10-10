@@ -10,14 +10,6 @@ export const STATIONS = [
   'Sector-24', 'Mahatma Mandir',
 ] as const
 
-/** Current service, as headway (minutes) per hour band. Based on GMRC's published
- *  North–South frequency (~12 min peak) and service to 11 PM from 18 May 2026. */
-export const CURRENT_HEADWAY: Record<'weekday' | 'saturday' | 'sunday', (h: number) => number | null> = {
-  weekday: (h) => (h < 6 || h >= 23 ? null : (h >= 8 && h < 11) || (h >= 17 && h < 20) ? 12 : 15),
-  saturday: (h) => (h < 6 || h >= 23 ? null : (h >= 8 && h < 11) || (h >= 17 && h < 20) ? 12 : 15),
-  sunday: (h) => (h < 8 || h >= 22 ? null : 15),
-}
-
 export type HolidayKind = 'holiday' | 'festival-night' | 'low-travel'
 export interface CalendarDay {
   date: string // YYYY-MM-DD
@@ -57,8 +49,6 @@ export interface CityEvent {
 export const MODEL = {
   networkDailyJourneys: 200_000, // GMRC, routine days Aug 2026
   corridorShare: 0.3, // ~30% of riders use N–S corridor (GMRC via DeshGujarat, 2025)
-  peakDirectionShare: 0.6,
-  busiestLinkShare: 0.55,
   trainCapacityComfort: 450, // DPR planning capacity, 3-car
   trainCapacityCrush: 764, // DPR crush capacity
   minHeadway: 5, // assumed limit from terminals/turnback on this corridor
@@ -66,27 +56,27 @@ export const MODEL = {
   maxHeadwayLowTravel: 20, // Diwali-type days only
   minLoadToStartEarly: 600,
   minLoadToExtend: 300,
-  allowedHeadways: [5, 6, 8, 10, 12, 15, 20],
+  allowedHeadways: [5, 6, 7, 8, 10, 12, 15, 20],
   dayFactor: { weekday: 1, saturday: 0.85, sunday: 0.77, holiday: 0.7, 'low-travel': 0.45 },
   stadiumMetroShare: 0.3, // fitted: IPL final 2026 added ~78k journeys ≈ 30% of 132k crowd
-  stadiumEgressToApmcSide: 0.65,
   navratriJourneys: { weekday: 12_000, weekend: 18_000 }, // assumption
   rainHeavyMm: 30,
   rainUplift: 0.05, // GMRC counts on heavy-rain days stayed near normal
-  cycleFullMin: 166, // APMC→Mahatma Mandir 78 min ×2 + 2×5 turnaround (GMRC timetable)
-  cycleShortTurnMin: 74, // APMC⇄Motera 32 min ×2 + 2×5
-  corridorFleet: 14, // assumed trainsets allocated to this corridor
-  generatorShare: 0.4, // share of a normal weekday's trips made to/from listed generators (rest = background)
+  generatorShare: 0.4,
+  thinOnlyOnSpecialDays: true, // ordinary days keep the published timetable unless demand exceeds it
+  peakFill: 0.92, // a normal weekday's busiest hour fills today's best peak service to 92% (link calibration) // share of a normal weekday's trips made to/from listed generators (rest = background)
 }
 
 export const ASSUMPTIONS = [
-  'Corridor demand = 2,00,000 network journeys/day (GMRC, Aug 2026) × 30% N–S share.',
-  'Hourly shape: office/college peaks 8–11 AM and 5–8 PM on working days; flatter on holidays.',
-  'Busiest link carries 60% (peak direction) × 55% of an hour’s corridor journeys.',
-  'Train capacity 450 comfortable / 764 crush (Ahmedabad Metro DPR, 3-car).',
-  'Stadium: 30% of spectators use the metro (fitted to the IPL final, 31 May 2026: +66% journeys).',
-  'Navratri: 12k (weekday) / 18k (weekend) extra corridor journeys, out 7–10 PM, back 11 PM–2 AM.',
+  'Network demand = 2,00,000 journeys/day (GMRC, Aug 2026): Blue 70%, Red+Yellow 30% (GMRC, 2025).',
+  'Current service: Red+Yellow from the real APMC departures (GMRC timetable, 18 May 2026); Blue 7 min peak / 10 off-peak, Sundays 10 / 12 (GMRC, Jul 2025).',
+  'Generators (offices, colleges, hubs, industry, temples) set when and where trips happen; they carry 40% of a normal weekday, background trips on a flat curve fill each day to its total.',
+  'Destinations by gravity: P(s→t) ∝ weight(t) × exp(−0.08 × km). Link loads summed per direction; the busiest link drives the headway.',
+  'Link calibration: ordinary demand is scaled so a normal weekday’s busiest hour fills today’s best peak service to 92%. Event crowds are not scaled.',
+  'Train capacity 450 comfortable / 764 crush (Ahmedabad Metro DPR, 3-car). Shortest headway 5 min, service standard at most 15 min.',
+  'Thinning (fewer trains) is suggested only on holidays and low-travel days, and only when trains would run under 60% full.',
+  'Stadium: 30% of spectators use the metro (fitted to the IPL final, 31 May 2026); Blue riders change at Old High Court.',
+  'Navratri: 12k (weekday) / 18k (weekend) extra Red+Yellow journeys (Blue scaled by line share), out 7–10 PM, back 11 PM–2 AM.',
   'Heavy rain (≥30 mm): +5% only — GMRC counts on rain days stayed near normal.',
-  'Generators (offices, colleges, hubs, industry, temples) set when and where trips happen; they carry 60% of a normal weekday, background trips on a flat curve fill each day to its total.',
-  'Shortest headway 5 min; 14 trainsets for this corridor. Short-turn APMC⇄Motera when fleet runs short.',
+  'Fleet: 14 trainsets on Red+Yellow (short-turn APMC⇄Motera when short), 18 on Blue (assumed).',
 ]

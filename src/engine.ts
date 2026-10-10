@@ -1,5 +1,6 @@
-import { CALENDAR, CURRENT_HEADWAY, MODEL, type CalendarDay, type CityEvent } from './data'
-import { lineDemand } from './flows'
+import { CALENDAR, MODEL, type CalendarDay, type CityEvent } from './data'
+import { serviceHour } from './flows'
+import { OPERATIONS, currentHeadway, type DayPattern, type ServiceId } from './network'
 
 export interface DayContext {
   date: string
@@ -13,12 +14,16 @@ export interface DayContext {
 export interface HourRow {
   hour: number // 6 … 26 (26 = 02:00 next day)
   load: number // passengers/hour on busiest link, peak direction
+  need: number // load + queue carried over from the previous hour
+  carried: number // what the recommended service can move
+  overflow: number // left over even at the shortest headway (BRTS relief)
   backlog: number // still waiting at end of hour
   currentHeadway: number | null
   recommendedHeadway: number | null
   currentCapacity: number
   recommendedCapacity: number
   crush: boolean
+  link: { from: string; to: string } // busiest link, in travel direction
   drivers: string[]
 }
 
@@ -28,25 +33,35 @@ export interface Band {
   currentHeadway: number | null
   recommendedHeadway: number | null
   peakLoad: number
+  peakNeed: number
   currentCapacity: number
   recommendedCapacity: number
+  link: { from: string; to: string }
   drivers: string[]
   change: 'more' | 'fewer' | 'same' | 'extend' | 'start-early'
 }
 
 export interface Plan {
   ctx: DayContext
+  service: ServiceId
   hours: HourRow[]
   bands: Band[]
   summary: {
     peakLoad: number
     peakHour: number
+    peakLink: { from: string; to: string }
     extraTripsPerDirection: number
     lastTrain: number | null
     currentLastTrain: number
     peakTrainsNeeded: number
+    fleet: number
+    fleetShort: boolean
     shortTurn: boolean
     leftBehindCurrent: number
+    currentBestHeadway: number | null
+    currentWorstHeadway: number | null
+    /** largest hourly queue the plan cannot carry even at the 5-minute limit (→ BRTS relief) */
+    peakOverflow: number
   }
 }
 
@@ -115,15 +130,32 @@ export function festivalJourneys(ctx: DayContext, name: string): number {
   return name.startsWith('Navratri') ? (weekend ? MODEL.navratriJourneys.weekend : MODEL.navratriJourneys.weekday) : 10_000
 }
 
-export function computePlan(ctx: DayContext): Plan {
-  const { holiday, lowTravel, festivalNight, workingDay, rainy } = dayModel(ctx)
-  // hourly shape and reasons come from the generators on Red+Yellow (APMC ⇄ Mahatma Mandir)
-  const demand = lineDemand(ctx, 'redYellow')
-  const linkFactor = MODEL.peakDirectionShare * MODEL.busiestLinkShare
+const linkCal: Partial<Record<ServiceId, number>> = {}
+/**
+ * Busiest-link calibration per line: ordinary demand is scaled so that on a normal weekday
+ * (Mon 26 Oct 2026) the busiest hour fills today's best peak service to PEAK_FILL. The raw gravity
+ * model counts every trip on every link it crosses within one clock hour, which overstates the
+ * peak; the original corridor model was tuned the same way (2,074 of 2,250). Events are not scaled.
+ */
+export function linkCalibration(sid: ServiceId): number {
+  if (linkCal[sid] != null) return linkCal[sid]!
+  const ref = buildContext('2026-10-26', [], null)
+  let raw = 0
+  let best = 99
+  for (let h = 5; h <= 26; h++) {
+    raw = Math.max(raw, serviceHour(ref, sid, h).busiest.load)
+    best = Math.min(best, currentHeadway(sid, 'weekday', h) ?? 99)
+  }
+  return (linkCal[sid] = (MODEL.peakFill * (60 / best) * MODEL.trainCapacityComfort) / raw)
+}
+
+export function computePlan(ctx: DayContext, sid: ServiceId = 'redYellow'): Plan {
+  const { holiday, lowTravel, workingDay, rainy } = dayModel(ctx)
+  const ops = OPERATIONS[sid]
 
   // the timetable that would run today (holidays run the Sunday pattern)
-  const pattern = workingDay ? ctx.dayType : 'sunday'
-  const current = CURRENT_HEADWAY[pattern === 'weekday' || pattern === 'saturday' ? pattern : 'sunday']
+  const pattern: DayPattern = workingDay ? ctx.dayType : 'sunday'
+  const current = (h: number) => currentHeadway(sid, pattern, h)
 
   const hours: HourRow[] = []
   let backlog = 0
@@ -131,62 +163,17 @@ export function computePlan(ctx: DayContext): Plan {
   let leftBehindCurrent = 0
 
   for (let h = 5; h <= 26; h++) {
-    const drivers: string[] = []
-    let load = demand[h].journeys * linkFactor
-    let crush = false
-
-    drivers.push(...demand[h].drivers)
+    // passengers/hour on the busiest link and direction this hour (gravity model over the real line)
+    const sh = serviceHour(ctx, sid, h, linkCalibration(sid))
+    const load = sh.busiest.load
+    const drivers = [...sh.drivers]
     if (holiday) drivers.push(`${holiday.name} holiday: no commute peak`)
     if (lowTravel) drivers.push(`${lowTravel.name}: very low travel`)
     if (rainy && load > 0) drivers.push(`heavy rain forecast (${ctx.rainMm} mm)`)
-
-    for (const e of ctx.events) {
-      if (e.type === 'exam') {
-        if (h >= 7 && h < 9) {
-          load += e.attendance * 0.4 * 0.5
-          drivers.push(`${e.name}: students travelling in`)
-        }
-        if (h >= 13 && h < 15) {
-          load += e.attendance * 0.4 * 0.5
-          drivers.push(`${e.name}: students returning`)
-        }
-      }
-      if (e.type === 'stadium') {
-        const fans = e.attendance * MODEL.stadiumMetroShare
-        const startH = Math.floor(e.start)
-        const inflow: Record<number, number> = { [startH - 4]: 0.15, [startH - 3]: 0.25, [startH - 2]: 0.35, [startH - 1]: 0.25 }
-        if (inflow[h]) {
-          load += fans * inflow[h] * 0.85
-          drivers.push(`${e.name}: fans arriving at Motera`)
-        }
-        const endH = Math.floor(e.end)
-        const egress: Record<number, number> = { [endH]: 0.6, [endH + 1]: 0.3, [endH + 2]: 0.1 }
-        if (egress[h]) {
-          load += fans * egress[h] * MODEL.stadiumEgressToApmcSide
-          crush = true
-          drivers.push(`${e.name}: crowd leaving Motera`)
-        }
-      }
-    }
-
-    if (festivalNight) {
-      const g = festivalJourneys(ctx, festivalNight.name)
-      const out: Record<number, number> = { 19: 0.3, 20: 0.5, 21: 0.2 }
-      const back: Record<number, number> = { 23: 0.35, 24: 0.45, 25: 0.2 }
-      if (out[h]) {
-        load += g * out[h] * 0.4
-        drivers.push(`${festivalNight.name}: people heading out`)
-      }
-      if (back[h]) {
-        load += g * back[h] * 0.4
-        drivers.push(`${festivalNight.name}: late return wave`)
-      }
-    }
+    let crush = sh.crush
 
     // recommended service
-    const cap = crush || ctx.events.some((e) => e.type === 'stadium' && h >= Math.floor(e.start) - 4 && h < Math.floor(e.start))
-      ? MODEL.trainCapacityCrush
-      : MODEL.trainCapacityComfort
+    const cap = crush ? MODEL.trainCapacityCrush : MODEL.trainCapacityComfort
     if (cap === MODEL.trainCapacityCrush) crush = true
     const need = load + backlog
     const maxH = lowTravel ? MODEL.maxHeadwayLowTravel : MODEL.maxHeadway
@@ -198,11 +185,16 @@ export function computePlan(ctx: DayContext): Plan {
       const tph = Math.ceil(need / cap)
       recH = roundHeadway(Math.min(maxH, 60 / Math.max(tph, 1)))
       if (recH < MODEL.minHeadway) recH = MODEL.minHeadway
-      // only thin out service when trains would be under 60% full
+      // only thin out service when trains would be under 60% full, and only on days the published
+      // timetable was not written for (holidays, low-travel days)
       const cur = current(h)
-      if (inService && cur != null && recH > cur && need > 0.6 * (60 / cur) * cap) recH = cur
+      const thinOk = !MODEL.thinOnlyOnSpecialDays || holiday || lowTravel
+      if (inService && cur != null && recH > cur && (!thinOk || need > 0.6 * (60 / cur) * cap)) recH = cur
     }
     const recCap = recH ? (60 / recH) * cap : 0
+    const carried = Math.min(need, recCap)
+    // what even the 5-minute limit cannot carry this hour: the surge to hand to Janmarg BRTS
+    const overflow = recH === MODEL.minHeadway ? Math.max(0, need - recCap) : 0
     backlog = recH ? Math.max(0, need - recCap) : 0 // no train: riders choose another mode
 
     const curH = h <= 23 ? current(h) : null
@@ -218,12 +210,16 @@ export function computePlan(ctx: DayContext): Plan {
     hours.push({
       hour: h,
       load: Math.round(load),
+      need: Math.round(need),
+      carried: Math.round(carried),
+      overflow: Math.round(overflow),
       backlog: Math.round(backlog),
       currentHeadway: curH,
       recommendedHeadway: recH,
       currentCapacity: Math.round(curCap),
       recommendedCapacity: Math.round(recCap),
       crush,
+      link: { from: sh.busiest.dir === 'fwd' ? sh.busiest.edge.a : sh.busiest.edge.b, to: sh.busiest.dir === 'fwd' ? sh.busiest.edge.b : sh.busiest.edge.a },
       drivers: [...new Set(drivers)],
     })
   }
@@ -246,23 +242,31 @@ export function computePlan(ctx: DayContext): Plan {
   const lastRec = [...hours].reverse().find((r) => r.recommendedHeadway)
   const lastCur = [...hours].reverse().find((r) => r.currentHeadway)
   const minH = Math.min(...hours.map((r) => r.recommendedHeadway ?? 99))
-  const fullTrains = Math.ceil(MODEL.cycleFullMin / minH)
-  const shortTurn = fullTrains > MODEL.corridorFleet
-  const peakTrainsNeeded = shortTurn ? Math.ceil(MODEL.cycleShortTurnMin / minH) : fullTrains
+  const fullTrains = Math.ceil(ops.cycleFullMin / minH)
+  const shortTurn = fullTrains > ops.fleet && ops.cycleShortTurnMin != null
+  const peakTrainsNeeded = shortTurn ? Math.ceil(ops.cycleShortTurnMin! / minH) : fullTrains
+  const curHeadways = hours.map((r) => r.currentHeadway).filter((x): x is number => x != null)
 
   return {
     ctx,
+    service: sid,
     hours,
     bands,
     summary: {
       peakLoad: peak.load,
       peakHour: peak.hour,
+      peakLink: peak.link,
       extraTripsPerDirection: Math.round(extra),
       lastTrain: lastRec ? lastRec.hour + 1 : null,
       currentLastTrain: lastCur ? lastCur.hour + 1 : 23,
       peakTrainsNeeded,
+      fleet: ops.fleet,
+      fleetShort: peakTrainsNeeded > ops.fleet,
       shortTurn,
       leftBehindCurrent: Math.round(leftBehindCurrent + backlogCurrent),
+      currentBestHeadway: curHeadways.length ? Math.min(...curHeadways) : null,
+      currentWorstHeadway: curHeadways.length ? Math.max(...curHeadways) : null,
+      peakOverflow: Math.max(0, ...hours.map((r) => r.overflow)),
     },
   }
 }
@@ -273,7 +277,9 @@ function toBands(rows: HourRow[]): Band[] {
     const last = bands[bands.length - 1]
     if (last && last.to === r.hour && last.currentHeadway === r.currentHeadway && last.recommendedHeadway === r.recommendedHeadway) {
       last.to = r.hour + 1
+      if (r.load > last.peakLoad) last.link = r.link
       last.peakLoad = Math.max(last.peakLoad, r.load)
+      last.peakNeed = Math.max(last.peakNeed, r.need)
       last.currentCapacity = Math.min(last.currentCapacity, r.currentCapacity)
       last.recommendedCapacity = Math.min(last.recommendedCapacity, r.recommendedCapacity)
       last.drivers = [...new Set([...last.drivers, ...r.drivers])]
@@ -284,6 +290,8 @@ function toBands(rows: HourRow[]): Band[] {
         currentHeadway: r.currentHeadway,
         recommendedHeadway: r.recommendedHeadway,
         peakLoad: r.load,
+        peakNeed: r.need,
+        link: r.link,
         currentCapacity: r.currentCapacity,
         recommendedCapacity: r.recommendedCapacity,
         drivers: [...r.drivers],

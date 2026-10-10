@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ASSUMPTIONS, MODEL, type CityEvent, type EventType } from './data'
 import { buildContext, computePlan, fmtHour, type Plan } from './engine'
-import { bandLabel, justify, type JustifyResult } from './justify'
+import { bandLabel, justify, linkLabel, type JustifyResult } from './justify'
+import { APMC_DEPARTURES, LINE, OPERATIONS, SERVICES, type ServiceId } from './network'
 import { fetchRainMm } from './weather'
 import RouteMap from './RouteMap'
 import './App.css'
@@ -25,6 +26,7 @@ export default function App() {
   const [rainSource, setRainSource] = useState<'forecast' | 'manual' | 'none'>('none')
   const [just, setJust] = useState<JustifyResult | null>(null)
   const [busy, setBusy] = useState(false)
+  const [line, setLine] = useState<ServiceId>('redYellow')
 
   useEffect(() => {
     try {
@@ -49,7 +51,8 @@ export default function App() {
     }
   }, [date])
 
-  const plan = useMemo(() => computePlan(buildContext(date, events, rain)), [date, events, rain])
+  const ctx = useMemo(() => buildContext(date, events, rain), [date, events, rain])
+  const plan = useMemo(() => computePlan(ctx, line), [ctx, line])
 
   useEffect(() => {
     let alive = true
@@ -132,11 +135,42 @@ export default function App() {
       </section>
 
       <section className="card">
-        <RouteMap key={date} ctx={plan.ctx} initialHour={s.peakHour} />
+        <RouteMap key={date} ctx={ctx} initialHour={s.peakHour} />
       </section>
 
+      <div className="tabs" role="tablist" aria-label="Line to plan">
+        {(Object.keys(SERVICES) as ServiceId[]).map((id) => (
+          <button
+            key={id}
+            role="tab"
+            aria-selected={line === id}
+            className={line === id ? 'on' : ''}
+            onClick={() => setLine(id)}
+          >
+            {SERVICES[id].lines.map((l) => (
+              <i key={l} className="dotline" style={{ background: LINE[l].color }} />
+            ))}
+            {SERVICES[id].name}
+          </button>
+        ))}
+      </div>
+
+      <p className="finding">
+        {line === 'redYellow' ? (
+          <>
+            <strong>Finding:</strong> GMRC's real timetable (18 May 2026) runs Red+Yellow every {s.currentBestHeadway} min at best
+            (4 trains/hour), not the 12 min we assumed. Off-peak gaps reach {s.currentWorstHeadway} min and the last APMC departure is{' '}
+            {APMC_DEPARTURES[APMC_DEPARTURES.length - 1]}.
+          </>
+        ) : (
+          <>
+            <strong>Blue line timetable</strong> (GMRC, Jul 2025): every 7 min at peak, 10 min off-peak; Sundays and holidays 10 / 12 min.
+          </>
+        )}
+      </p>
+
       <section className="stats">
-        <Stat label="Peak load, busiest link" value={`${n(s.peakLoad)}/h`} hint={`at ${fmtHour(s.peakHour)}`} />
+        <Stat label="Peak load, busiest link" value={`${n(s.peakLoad)}/h`} hint={`${fmtHour(s.peakHour)} · ${linkLabel(s.peakLink)}`} />
         <Stat label="Extra trips, each way" value={s.extraTripsPerDirection ? `+${s.extraTripsPerDirection}` : '0'} hint="vs today’s timetable" />
         <Stat
           label="Last train"
@@ -144,7 +178,12 @@ export default function App() {
           hint={s.lastTrain && s.lastTrain > s.currentLastTrain ? `now ${fmtHour(s.currentLastTrain)}` : 'no change'}
           alert={!!s.lastTrain && s.lastTrain > s.currentLastTrain}
         />
-        <Stat label="Trains at peak" value={String(s.peakTrainsNeeded)} hint={s.shortTurn ? 'short-turn APMC⇄Motera' : `of ${MODEL.corridorFleet} on corridor`} />
+        <Stat
+          label="Trains at peak"
+          value={`${s.peakTrainsNeeded}/${s.fleet}`}
+          hint={s.fleetShort ? 'more than the fleet: hand overflow to BRTS' : s.shortTurn ? `short-turn ${OPERATIONS[line].shortTurn}` : 'trainsets on this line'}
+          alert={s.fleetShort}
+        />
         <Stat label="Left behind today" value={n(s.leftBehindCurrent)} hint="if the normal timetable runs" alert={s.leftBehindCurrent > 500} />
       </section>
 
@@ -168,7 +207,10 @@ export default function App() {
             const line = just?.lines.find((l) => l.band === bandLabel(b))
             return (
               <div key={b.from} className={`band ${b.change}`}>
-                <div className="when">{bandLabel(b)}</div>
+                <div className="when">
+                  {bandLabel(b)}
+                  <small>{linkLabel(b.link)}</small>
+                </div>
                 <div className="hw">
                   <span className="now">{b.currentHeadway ? `${b.currentHeadway} min` : 'no service'}</span>
                   <span className="arrow">→</span>

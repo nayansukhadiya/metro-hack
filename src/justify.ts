@@ -1,4 +1,6 @@
 import { fmtHour, type Band, type Plan } from './engine'
+import { MODEL } from './data'
+import { SERVICES, STATIONS } from './network'
 
 export interface Justification {
   band: string
@@ -12,15 +14,19 @@ export interface JustifyResult {
 }
 
 export const bandLabel = (b: Band) => `${fmtHour(b.from)}–${fmtHour(b.to)}`
+export const linkLabel = (l: { from: string; to: string }) => `${STATIONS[l.from]?.name ?? l.from} → ${STATIONS[l.to]?.name ?? l.to}`
 
 /** The only facts the language model may use. Numbers it writes are checked against these. */
 export function factsFor(plan: Plan) {
   return {
     date: plan.ctx.date,
+    line: SERVICES[plan.service].name,
     dayType: plan.ctx.dayType,
     calendar: plan.ctx.calendar.map((c) => c.name),
     events: plan.ctx.events.map((e) => `${e.name} (${e.attendance} people, ends ${fmtHour(e.end)})`),
     rainMm: plan.ctx.rainMm,
+    thinOutBelowPercentFull: 60,
+    serviceStandardMaxHeadwayMin: MODEL.maxHeadway,
     changes: plan.bands
       .filter((b) => b.change !== 'same')
       .map((b) => ({
@@ -29,6 +35,8 @@ export function factsFor(plan: Plan) {
         currentHeadwayMin: b.currentHeadway,
         recommendedHeadwayMin: b.recommendedHeadway,
         peakLoadPerHour: b.peakLoad,
+        queuedFromPreviousHour: Math.max(0, b.peakNeed - b.peakLoad),
+        busiestLink: linkLabel(b.link),
         currentCapacityPerHour: b.currentCapacity,
         newCapacityPerHour: b.recommendedCapacity,
         drivers: b.drivers,
@@ -42,10 +50,17 @@ export function templateLines(plan: Plan): Justification[] {
     .map((b) => {
       const why = b.drivers.length ? b.drivers.join('; ') : 'normal demand'
       const load = b.peakLoad.toLocaleString('en-IN')
+      const queued = Math.max(0, b.peakNeed - b.peakLoad)
+      const link = linkLabel(b.link)
       let en: string
       switch (b.change) {
         case 'more':
-          en = `Run every ${b.recommendedHeadway} min instead of ${b.currentHeadway}. Up to ${load} passengers/hour expected on the busiest link, more than today's ${b.currentCapacity.toLocaleString('en-IN')} capacity. Why: ${why}.`
+          en =
+            b.peakNeed > b.currentCapacity
+              ? `Run every ${b.recommendedHeadway} min instead of ${b.currentHeadway}. Up to ${load} passengers/hour expected on ${link}${queued ? `, plus ${queued.toLocaleString('en-IN')} still queued from the hour before` : ''}, more than today's ${b.currentCapacity.toLocaleString('en-IN')} capacity. Why: ${why}.`
+              : b.currentHeadway != null && b.currentHeadway > MODEL.maxHeadway
+                ? `Run every ${b.recommendedHeadway} min instead of ${b.currentHeadway}: today's timetable leaves gaps longer than the ${MODEL.maxHeadway}-minute service standard. About ${load} passengers/hour on ${link}. Why: ${why}.`
+                : `Run every ${b.recommendedHeadway} min instead of ${b.currentHeadway}. Up to ${load} passengers/hour expected on ${link}, which leaves no comfortable room at today's ${b.currentCapacity.toLocaleString('en-IN')} capacity. Why: ${why}.`
           break
         case 'fewer':
           en = `Relax to every ${b.recommendedHeadway} min (now ${b.currentHeadway}). Only about ${load} passengers/hour expected, so trains would run under 60% full. Why: ${why}.`
