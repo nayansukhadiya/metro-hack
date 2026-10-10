@@ -34,6 +34,8 @@ export interface DayOverview {
     usualLastTrain: string
     trainsNeeded: number
     fleet: number
+    fleetLimited: boolean
+    fleetFloorMin: number
     overflowPerHour: number
   }[]
   brtsRelief: { band: string; line: string; fromStop: string; toStop: string; extraBusesPerHour: number }[]
@@ -70,6 +72,8 @@ export function buildOverview(date: string, plans: Record<ServiceId, Plan>, reli
         usualLastTrain: fmtHour(p.summary.currentLastTrain),
         trainsNeeded: p.summary.peakTrainsNeeded,
         fleet: p.summary.fleet,
+        fleetLimited: p.summary.fleetLimited,
+        fleetFloorMin: p.summary.fleetFloor,
         overflowPerHour: p.summary.peakOverflow,
       }
     }),
@@ -148,7 +152,12 @@ export function templateLines(plan: Plan): Justification[] {
 
 // ---- Gujarati template (Western digits, station names in English) ----
 const GU_REASONS: [RegExp, string][] = [
-  [/match|stadium|fans|crowd leaving/i, 'મોટેરામાં મેચ'],
+  [/match|IPL|ODI|T20|cricket/i, 'ક્રિકેટ મેચ'],
+  [/Concert/i, 'કોન્સર્ટ'],
+  [/Carnival/i, 'કાંકરિયા કાર્નિવલ'],
+  [/marathon/i, 'મેરેથોન'],
+  [/Garba/i, 'ગરબા'],
+  [/fans|crowd/i, 'મોટો કાર્યક્રમ'],
   [/Navratri/i, 'નવરાત્રિ'],
   [/New Year/i, 'નવા વર્ષની રાત'],
   [/holiday/i, 'જાહેર રજા'],
@@ -225,9 +234,9 @@ export function templateSummary(o: DayOverview): Summary {
       parts.push(`every ${l.shortestHeadwayMin} min at the busiest`)
       guParts.push(`ભીડમાં દર ${l.shortestHeadwayMin} મિનિટે`)
     }
-    if (l.trainsNeeded > l.fleet) {
-      parts.push(`${l.trainsNeeded} trains needed, ${l.fleet} available`)
-      guParts.push(`${l.trainsNeeded} ટ્રેન જોઈએ, ${l.fleet} છે`)
+    if (l.fleetLimited) {
+      parts.push(`the fleet of ${l.fleet} trainsets limits trains to every ${l.fleetFloorMin} min`)
+      guParts.push(`${l.fleet} ટ્રેનથી દર ${l.fleetFloorMin} મિનિટથી વધુ નહીં`)
     }
     en.push(`${l.line}: ${parts.join(', ')}`)
     gu.push(`${l.line}: ${guParts.join(', ')}`)

@@ -1,13 +1,40 @@
+import {
+  Bus,
+  CalendarDays,
+  ChartColumn,
+  Check,
+  Clock,
+  CloudRain,
+  Copy,
+  Gauge,
+  Info,
+  ListChecks,
+  Map as MapIcon,
+  MoonStar,
+  Radio,
+  Route,
+  Sparkles,
+  TrainFront,
+  TrainTrack,
+  TriangleAlert,
+  Users,
+  X,
+} from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { ASSUMPTIONS, MODEL, type CityEvent, type EventType } from './data'
-import { BRTS, metroName, reliefPlan, type Relief } from './brts'
-import { buildContext, computePlan, fmtHour, type Plan } from './engine'
+import { reliefPlan, type Relief } from './brts'
+import { ASSUMPTIONS, MODEL, type CityEvent } from './data'
+import { buildContext, computePlan, fmtHour } from './engine'
+import { fromTemplate, EVENT_TEMPLATES } from './eventCatalog'
 import { serviceHour } from './flows'
 import { bandLabel, buildOverview, justify, linkLabel, type DayOverview, type JustifyResult } from './justify'
-import { APMC_DEPARTURES, LINE, OPERATIONS, SERVICES, SOURCES, type ServiceId } from './network'
+import { n } from './mapUtil'
+import { APMC_DEPARTURES, LINE, LINES, OPERATIONS, SERVICES, SOURCES, STATIONS, type ServiceId } from './network'
 import { controlRoomText, copyText } from './report'
-import { fetchRainMm } from './weather'
 import RouteMap from './RouteMap'
+import { EventSearch, MonthCalendar } from './ui/DayPicker'
+import FleetPanel from './ui/FleetPanel'
+import { Card, Chart, EventForm, ReliefCard, Stat } from './ui/parts'
+import { fetchRainMm } from './weather'
 import './App.css'
 
 const iso = (d: Date) => d.toISOString().slice(0, 10)
@@ -26,7 +53,6 @@ function useNow() {
   }, [])
   return now
 }
-const n = (x: number) => x.toLocaleString('en-IN')
 
 function loadEvents(): CityEvent[] {
   try {
@@ -36,6 +62,8 @@ function loadEvents(): CityEvent[] {
   }
 }
 
+const DEFAULT_FLEET = { blue: OPERATIONS.blue.fleet, redYellow: OPERATIONS.redYellow.fleet }
+
 export default function App() {
   const [date, setDate] = useState(tomorrow())
   const [events, setEvents] = useState<CityEvent[]>(loadEvents)
@@ -44,6 +72,7 @@ export default function App() {
   const [just, setJust] = useState<JustifyResult | null>(null)
   const [busy, setBusy] = useState(false)
   const [line, setLine] = useState<ServiceId>('redYellow')
+  const [fleets, setFleets] = useState<Record<ServiceId, number>>(DEFAULT_FLEET)
   const now = useNow()
 
   useEffect(() => {
@@ -70,9 +99,12 @@ export default function App() {
   }, [date])
 
   const ctx = useMemo(() => buildContext(date, events, rain), [date, events, rain])
-  const plans = useMemo(() => ({ blue: computePlan(ctx, 'blue'), redYellow: computePlan(ctx, 'redYellow') }), [ctx])
+  const plans = useMemo(
+    () => ({ blue: computePlan(ctx, 'blue', fleets.blue), redYellow: computePlan(ctx, 'redYellow', fleets.redYellow) }),
+    [ctx, fleets],
+  )
   const plan = plans[line]
-  // surge → Janmarg: hours where even 5-minute trains cannot carry the busiest link
+  // surge → Janmarg: hours where even the shortest headway the fleet allows cannot carry the busiest link
   const relief = useMemo<Relief[]>(
     () => (['blue', 'redYellow'] as const).flatMap((sid) => reliefPlan(plans[sid], (h) => serviceHour(ctx, sid, h))),
     [plans, ctx],
@@ -107,362 +139,308 @@ export default function App() {
     }
   }, [plan, overview])
 
-  const addMatch = () =>
-    setEvents((ev) => [
-      ...ev,
-      { id: crypto.randomUUID(), date, type: 'stadium', name: 'Cricket match at Motera', attendance: 110000, start: 19.5, end: 23.25 },
-    ])
+  const addEvent = (e: CityEvent) => setEvents((ev) => [...ev, e])
+  const matchDemo = () => {
+    const d = '2026-10-26'
+    setDate(d)
+    setEvents((ev) => (ev.some((e) => e.date === d && e.type === 'stadium') ? ev : [...ev, fromTemplate(EVENT_TEMPLATES[0], d)]))
+  }
 
   const dayEvents = events.filter((e) => e.date === date)
   const s = plan.summary
-  const weekday = new Date(date + 'T12:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' })
+  const longDate = new Date(date + 'T12:00:00').toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+  const reliefBuses = Math.max(0, ...relief.map((r) => r.buses))
+  const changes = plan.bands.filter((b) => b.change !== 'same').length
 
   return (
-    <div className="app">
-      <header>
-        <p className="eyebrow">PS-04 · No Day Is an Average Day</p>
-        <h1>Headway Planner</h1>
-        <p className="sub">Ahmedabad Metro (Blue, Red, Yellow, Violet) + Janmarg BRTS · tomorrow’s calendar in, headway changes and bus relief out</p>
+    <div className="shell">
+      <header className="topbar">
+        <div className="brand">
+          <span className="logo" aria-hidden="true">
+            <TrainFront size={22} />
+          </span>
+          <div>
+            <strong>Headway Planner</strong>
+            <span>Ahmedabad Metro + Janmarg BRTS · Metro Hacks PS-04</span>
+          </div>
+        </div>
+        <div className="topright">
+          {live ? (
+            <span className="pill live-pill">
+              <span className="pulse" aria-hidden="true" /> Live {fmtHour(now.hour)}
+            </span>
+          ) : (
+            <button className="pill" onClick={() => setDate(now.date)}>
+              <Radio size={14} aria-hidden="true" /> Go live
+            </button>
+          )}
+        </div>
+        <div className="linestripe" aria-hidden="true">
+          {LINES.map((l) => (
+            <i key={l.id} style={{ background: l.color }} />
+          ))}
+          <i style={{ background: '#1f3a68' }} />
+        </div>
       </header>
 
-      <section className="card controls">
-        <label>
-          Date
-          <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />
-        </label>
-        <div className="quick">
-          <button onClick={() => setDate(now.date)}>Today (live)</button>
-          <button onClick={() => setDate(tomorrow())}>Tomorrow</button>
-          <button onClick={() => setDate('2026-10-26')}>Normal Monday</button>
-          <button onClick={() => setDate('2026-10-11')}>Navratri night 1</button>
-          <button onClick={() => setDate('2026-11-08')}>Diwali</button>
-        </div>
-        <label>
-          Rain (mm)
-          <input
-            type="number"
-            min={0}
-            value={rain ?? ''}
-            placeholder="—"
-            onChange={(e) => {
-              setRain(e.target.value === '' ? null : Number(e.target.value))
-              setRainSource('manual')
-            }}
-          />
-          <small>{rainSource === 'forecast' ? 'Open-Meteo forecast' : rainSource === 'manual' ? 'entered by hand' : 'no forecast'}</small>
-        </label>
-      </section>
-
-      <section className="day">
-        <h2>{weekday}</h2>
-        <div className="chips">
-          <span className="chip">{plan.ctx.dayType}</span>
-          {plan.ctx.calendar.map((c) => (
-            <span key={c.name} className={`chip ${c.kind}`}>{c.name}</span>
-          ))}
-          {dayEvents.map((e) => (
-            <span key={e.id} className="chip event">
-              {e.name} · {n(e.attendance)} · ends {fmtHour(e.end)}
-              <button aria-label="Remove event" onClick={() => setEvents((ev) => ev.filter((x) => x.id !== e.id))}>×</button>
+      <main className="app">
+        <section className="how" aria-label="How it works">
+          <div>
+            <CalendarDays size={20} aria-hidden="true" />
+            <span>
+              <strong>1. Pick a day</strong> Holidays and festivals are built in; add matches, concerts or exams.
             </span>
-          ))}
-          {rain != null && rain >= MODEL.rainHeavyMm && <span className="chip rain">Heavy rain {rain} mm</span>}
-        </div>
-        <EventForm date={date} onAdd={(e) => setEvents((ev) => [...ev, e])} onMatch={addMatch} />
-      </section>
-
-      <section className="card">
-        <RouteMap key={date} ctx={ctx} initialHour={live && nowHour >= 6 ? Math.floor(nowHour) : s.peakHour} relief={relief} />
-      </section>
-
-      <div className="tabs" role="tablist" aria-label="Line to plan">
-        {(Object.keys(SERVICES) as ServiceId[]).map((id) => (
-          <button
-            key={id}
-            role="tab"
-            aria-selected={line === id}
-            className={line === id ? 'on' : ''}
-            onClick={() => setLine(id)}
-          >
-            {SERVICES[id].lines.map((l) => (
-              <i key={l} className="dotline" style={{ background: LINE[l].color }} />
-            ))}
-            {SERVICES[id].name}
-          </button>
-        ))}
-      </div>
-
-      <p className="finding">
-        {line === 'redYellow' ? (
-          <>
-            <strong>Finding:</strong> GMRC's real timetable (18 May 2026) runs Red+Yellow every {s.currentBestHeadway} min at best
-            (4 trains/hour), not the 12 min we assumed. Off-peak gaps reach {s.currentWorstHeadway} min and the last APMC departure is{' '}
-            {APMC_DEPARTURES[APMC_DEPARTURES.length - 1]}.
-          </>
-        ) : (
-          <>
-            <strong>Blue line timetable</strong> (GMRC, Jul 2025): every 7 min at peak, 10 min off-peak; Sundays and holidays 10 / 12 min.
-          </>
-        )}
-      </p>
-
-      {just && (
-        <section className="daysummary" aria-live="polite">
-          <span className="label">Day summary{just.provider === 'gemini' ? ' · Gemini, numbers checked' : ''}</span>
-          <p>{just.summary.en}</p>
-          {just.summary.gu && <p className="gu">{just.summary.gu}</p>}
+          </div>
+          <div>
+            <Users size={20} aria-hidden="true" />
+            <span>
+              <strong>2. We model the crowd</strong> Offices, colleges and events set when and where people travel, station by station.
+            </span>
+          </div>
+          <div>
+            <TrainFront size={20} aria-hidden="true" />
+            <span>
+              <strong>3. You get the plan</strong> Train frequency per hour, fleet needs, and Janmarg buses when the metro is full.
+            </span>
+          </div>
         </section>
-      )}
 
-      {live && (
-        <p className="live">
-          <span className="pulse" aria-hidden="true" /> <strong>Live {fmtHour(now.hour)}</strong>
-          {liveRow && (liveRow.recommendedHeadway || liveRow.currentHeadway) ? (
-            <>
-              {' '}
-              · {SERVICES[line].name}: about {n(liveRow.load)} passengers/hour on {linkLabel(liveRow.link)} · running every{' '}
-              {liveRow.currentHeadway ?? '—'} min, plan says {liveRow.recommendedHeadway ?? '—'} min
-              {liveRow.overflow > 0 && <> · <strong>{n(liveRow.overflow)}/h over capacity: Janmarg relief on</strong></>}
-            </>
-          ) : (
-            <> · {SERVICES[line].name}: no service this hour</>
-          )}
-        </p>
-      )}
+        <div className="pickgrid">
+          <Card icon={CalendarDays} step="1" title="Pick the day" sub="Dots mark holidays, festival nights and your events. Tap a date.">
+            <MonthCalendar key={date.slice(0, 7)} date={date} today={now.date} events={events} onPick={setDate} />
+            <div className="quick">
+              <button onClick={() => setDate(now.date)}>Today</button>
+              <button onClick={() => setDate(tomorrow())}>Tomorrow</button>
+              <button onClick={() => setDate('2026-10-26')}>Normal Monday</button>
+              <button onClick={() => setDate('2026-10-11')}>Navratri night 1</button>
+              <button onClick={() => setDate('2026-11-08')}>Diwali</button>
+              <button className="primary" onClick={matchDemo}>
+                <Sparkles size={14} aria-hidden="true" /> Match-night demo
+              </button>
+            </div>
+          </Card>
 
-      <section className="stats">
-        <Stat label="Peak load, busiest link" value={`${n(s.peakLoad)}/h`} hint={`${fmtHour(s.peakHour)} · ${linkLabel(s.peakLink)}`} />
-        <Stat label="Extra trips, each way" value={s.extraTripsPerDirection ? `+${s.extraTripsPerDirection}` : '0'} hint="vs today’s timetable" />
-        <Stat
-          label="Last train"
-          value={s.lastTrain ? fmtHour(s.lastTrain) : '—'}
-          hint={s.lastTrain && s.lastTrain > s.currentLastTrain ? `now ${fmtHour(s.currentLastTrain)}` : 'no change'}
-          alert={!!s.lastTrain && s.lastTrain > s.currentLastTrain}
-        />
-        <Stat
-          label="Trains at peak"
-          value={`${s.peakTrainsNeeded}/${s.fleet}`}
-          hint={s.fleetShort ? 'more than the fleet: hand overflow to BRTS' : s.shortTurn ? `short-turn ${OPERATIONS[line].shortTurn}` : 'trainsets on this line'}
-          alert={s.fleetShort}
-        />
-        <Stat label="Left behind today" value={n(s.leftBehindCurrent)} hint="if the normal timetable runs" alert={s.leftBehindCurrent > 500} />
-        <Stat
-          label="Overflow to Janmarg"
-          value={s.peakOverflow ? `${n(s.peakOverflow)}/h` : '0'}
-          hint={s.peakOverflow ? 'even at 5-min trains' : 'metro can carry it all'}
-          alert={s.peakOverflow > 0}
-        />
-      </section>
+          <Card icon={Sparkles} title={`What’s on, ${longDate}`} sub="Search an event type and add it to this date. Everything recalculates instantly.">
+            <div className="chips">
+              <span className="chip">{plan.ctx.dayType}</span>
+              {plan.ctx.calendar.map((c) => (
+                <span key={c.name} className={`chip ${c.kind}`}>
+                  {c.kind === 'festival-night' ? <MoonStar size={13} aria-hidden="true" /> : <CalendarDays size={13} aria-hidden="true" />} {c.name}
+                </span>
+              ))}
+              {dayEvents.map((e) => (
+                <span key={e.id} className="chip event">
+                  {e.name} · {n(e.attendance)} · {fmtHour(e.start)}–{fmtHour(e.end)}
+                  {e.station ? ` · ${STATIONS[e.station]?.name ?? ''}` : ''}
+                  <button className="iconbtn" aria-label={`Remove ${e.name}`} onClick={() => setEvents((ev) => ev.filter((x) => x.id !== e.id))}>
+                    <X size={12} />
+                  </button>
+                </span>
+              ))}
+              {rain != null && rain >= MODEL.rainHeavyMm && (
+                <span className="chip rain">
+                  <CloudRain size={13} aria-hidden="true" /> Heavy rain {rain} mm
+                </span>
+              )}
+            </div>
+            <EventSearch date={date} onAdd={addEvent} onPick={setDate} />
+            <div className="row formrow">
+              <EventForm date={date} onAdd={addEvent} />
+              <label className="rain">
+                <CloudRain size={15} aria-hidden="true" /> Rain
+                <input
+                  type="number"
+                  min={0}
+                  value={rain ?? ''}
+                  placeholder="mm"
+                  onChange={(e) => {
+                    setRain(e.target.value === '' ? null : Number(e.target.value))
+                    setRainSource('manual')
+                  }}
+                />
+                <small>{rainSource === 'forecast' ? 'forecast' : rainSource === 'manual' ? 'by hand' : 'no forecast'}</small>
+              </label>
+            </div>
+          </Card>
+        </div>
 
-      {relief.length > 0 && <ReliefCard relief={relief} line={line} />}
+        {just && (
+          <section className="daysummary" aria-live="polite">
+            <span className="label">
+              <Sparkles size={13} aria-hidden="true" /> The answer · {just.provider === 'gemini' ? 'written by Gemini, numbers checked' : 'day summary'}
+            </span>
+            <p>{just.summary.en}</p>
+            {just.summary.gu && <p className="gu">{just.summary.gu}</p>}
+          </section>
+        )}
 
-      <section className="card">
-        <h3>Demand vs capacity, by hour</h3>
-        <Chart plan={plan} />
-      </section>
-
-      <section className="card">
-        <div className="row">
-          <h3>Recommended changes · {SERVICES[line].name}</h3>
-          <div className="actions">
-            {just && (
-              <span className={`badge ${just.provider}`}>
-                {busy ? 'updating…' : just.provider === 'gemini' ? 'Written by Gemini · numbers checked' : 'Template'}
-              </span>
-            )}
-            <button className="primary" onClick={copyPlan} disabled={busy}>
-              {copied === 'ok' ? 'Copied ✓' : copied === 'fail' ? 'Copy failed' : 'Copy for control room'}
+        <div className="tabs" role="tablist" aria-label="Line to plan">
+          {(Object.keys(SERVICES) as ServiceId[]).map((id) => (
+            <button key={id} role="tab" aria-selected={line === id} className={line === id ? 'on' : ''} onClick={() => setLine(id)}>
+              {SERVICES[id].lines.map((l) => (
+                <i key={l} className="dotline" style={{ background: LINE[l].color }} />
+              ))}
+              {SERVICES[id].name}
+              <span className="count">{plans[id].bands.filter((b) => b.change !== 'same').length}</span>
             </button>
-          </div>
-        </div>
-        {just?.note && <p className="note">{just.note}</p>}
-        <div className="table">
-          {plan.bands.map((b) => {
-            const text = just?.lines.find((l) => l.band === bandLabel(b))
-            return (
-              <div key={b.from} className={`band ${b.change} ${live && nowHour >= b.from && nowHour < b.to ? 'now' : ''}`}>
-                <div className="when">
-                  {bandLabel(b)}
-                  <small>{linkLabel(b.link)}</small>
-                  {live && nowHour >= b.from && nowHour < b.to && <span className="nowtag">now</span>}
-                  {relief.some((r) => r.service === line && r.from < b.to && r.to > b.from) && <span className="nowtag bus">+ Janmarg</span>}
-                </div>
-                <div className="hw">
-                  <span className="now">{b.currentHeadway ? `${b.currentHeadway} min` : 'no service'}</span>
-                  <span className="arrow">→</span>
-                  <span className="rec">{b.recommendedHeadway ? `${b.recommendedHeadway} min` : 'none'}</span>
-                </div>
-                <div className="why">
-                  {b.change === 'same' ? (
-                    <span className="muted">Keep as is · {n(b.peakLoad)}/h fits {n(b.currentCapacity)}/h</span>
-                  ) : (
-                    <>
-                      <p>{text?.en ?? '…'}</p>
-                      {text?.gu && <p className="gu">{text.gu}</p>}
-                    </>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </section>
-
-      <details className="card">
-        <summary>Data and assumptions</summary>
-        <ul>
-          {ASSUMPTIONS.map((a) => (
-            <li key={a}>{a}</li>
           ))}
-        </ul>
-        <p className="muted">
-          Pilot model (PPP): a private partner builds and runs this as a service for GMRC, paid by an annual licence or a share of extra
-          event-day fare revenue. GMRC keeps the data. It never touches signalling.
+        </div>
+
+        {live && (
+          <p className="live">
+            <span className="pulse" aria-hidden="true" /> <strong>Now {fmtHour(now.hour)}</strong>
+            {liveRow && (liveRow.recommendedHeadway || liveRow.currentHeadway) ? (
+              <>
+                {' '}
+                · about {n(liveRow.load)} passengers/hour on {linkLabel(liveRow.link)} · running every {liveRow.currentHeadway ?? '—'} min, plan says{' '}
+                {liveRow.recommendedHeadway ?? '—'} min
+                {liveRow.overflow > 0 && (
+                  <>
+                    {' '}
+                    · <strong>{n(liveRow.overflow)}/h over capacity: Janmarg relief on</strong>
+                  </>
+                )}
+              </>
+            ) : (
+              <> · {SERVICES[line].name}: no service this hour</>
+            )}
+          </p>
+        )}
+
+        <section className="stats">
+          <Stat icon={Users} label="Peak crowd, busiest stretch" value={`${n(s.peakLoad)}/h`} hint={`${fmtHour(s.peakHour)} · ${linkLabel(s.peakLink)}`} />
+          <Stat icon={ListChecks} label="Changes to the timetable" value={String(changes)} hint={`${s.extraTripsPerDirection ? `+${s.extraTripsPerDirection}` : 'no'} extra trips each way`} />
+          <Stat
+            icon={Clock}
+            label="Last train"
+            value={s.lastTrain ? fmtHour(s.lastTrain) : '—'}
+            hint={s.lastTrain && s.lastTrain > s.currentLastTrain ? `usually ${fmtHour(s.currentLastTrain)}` : 'as usual'}
+            alert={!!s.lastTrain && s.lastTrain > s.currentLastTrain}
+          />
+          <Stat
+            icon={TrainTrack}
+            label="Trainsets at the busiest hour"
+            value={`${s.peakTrainsNeeded} of ${s.fleet}`}
+            hint={s.fleetLimited ? `fleet caps trains at every ${s.fleetFloor} min` : s.shortTurn ? `short-turn ${OPERATIONS[line].shortTurn}` : 'within the fleet'}
+            alert={s.fleetLimited}
+          />
+          <Stat icon={TriangleAlert} label="Left behind on today’s timetable" value={n(s.leftBehindCurrent)} hint="if nothing changes" alert={s.leftBehindCurrent > 500} />
+          <Stat
+            icon={Bus}
+            label="Overflow to Janmarg"
+            value={s.peakOverflow ? `${n(s.peakOverflow)}/h` : '0'}
+            hint={s.peakOverflow ? `at ${s.fleetFloor}-min trains` : 'metro carries it all'}
+            alert={s.peakOverflow > 0}
+          />
+        </section>
+
+        <p className="finding">
+          <Info size={16} aria-hidden="true" />
+          <span>
+            {line === 'redYellow' ? (
+              <>
+                <strong>Finding:</strong> GMRC’s real timetable (18 May 2026) runs Red+Yellow every {s.currentBestHeadway} min at best (4 trains/hour), not the 12
+                min we first assumed. Off-peak gaps reach {s.currentWorstHeadway} min; the last APMC departure is {APMC_DEPARTURES[APMC_DEPARTURES.length - 1]}.
+              </>
+            ) : (
+              <>
+                <strong>Blue line timetable</strong> (GMRC, Jul 2025): every 7 min at peak, 10 min off-peak; Sundays and holidays 10 / 12 min.
+              </>
+            )}
+          </span>
         </p>
-      </details>
 
-      <footer className="footer">
-        <p>
-          <strong>Data sources:</strong> {SOURCES} · Janmarg BRTS route map (Ahmedabad Janmarg Ltd) · Open-Meteo forecast · map tiles © OpenStreetMap
-          contributors.
-        </p>
-        <p>Office and college timings, sizes and metro shares marked “assumed” are estimates; the plan is advice for operators and never touches signalling.</p>
-      </footer>
-    </div>
-  )
-}
+        <Card icon={MapIcon} step="2" title="Live network" sub="Move the hour slider to watch crowds build. Tap a station for its offices, colleges and nearest Janmarg stop.">
+          <RouteMap key={date} ctx={ctx} initialHour={live && nowHour >= 6 ? Math.floor(nowHour) : s.peakHour} relief={relief} />
+        </Card>
 
-function ReliefCard({ relief, line }: { relief: Relief[]; line: ServiceId }) {
-  const mine = relief.filter((r) => r.service === line)
-  const other = relief.length - mine.length
-  return (
-    <section className="card relief">
-      <div className="row">
-        <h3>🚌 Surge relief with Janmarg BRTS</h3>
-        <span className="badge">{relief.length} route{relief.length > 1 ? 's' : ''}</span>
-      </div>
-      <p className="note">
-        In these hours the metro is full even at 5-minute trains. Extra Janmarg buses run between the BRTS stops next to the overloaded stretch
-        (bus 80 passengers, at most 30 extra buses/hour per corridor; assumptions).
-      </p>
-      {(mine.length ? mine : relief).map((r) => {
-        const inter = r.route.filter((id) => BRTS[id].interchange).map((id) => BRTS[id].name)
-        return (
-          <div key={`${r.service}${r.from}${r.metroTo}`} className="reliefrow">
-            <div className="when">
-              {fmtHour(r.from)}–{fmtHour(r.to)}
-              <small>{SERVICES[r.service].name}</small>
-            </div>
-            <div>
-              <p>
-                <strong>+{r.buses} buses/hour</strong> {BRTS[r.route[0]].name} → {BRTS[r.route[r.route.length - 1]].name} ({r.route.length - 1} stops),
-                linking metro {metroName(r.metroFrom)} → {metroName(r.metroTo)}. Takes {n(r.carried)} of the {n(r.overflow)}{' '}
-                passengers/hour the metro cannot carry
-                {relief.filter((x) => x.service === r.service && x.from === r.from).length > 1 ? ' together with the other corridor' : ''}
-                {r.carried < r.overflow && relief.filter((x) => x.service === r.service && x.from === r.from).reduce((a, x) => a + x.carried, 0) < r.overflow
-                  ? '; the rest wait for the next trains'
-                  : ''}
-                .
-              </p>
-              <p className="muted">
-                Why: {r.why}
-                {inter.length ? ` · via ${inter.join(', ')}` : ''}
-              </p>
-            </div>
-          </div>
-        )
-      })}
-      {mine.length > 0 && other > 0 && <p className="muted">+ {other} more on the other line tab.</p>}
-    </section>
-  )
-}
+        <Card icon={TrainTrack} step="3" title="Fleet" sub="Trainsets each hour needs against what each line has. Change the fleet to try options; the whole plan updates.">
+          <FleetPanel plans={plans} fleets={fleets} onChange={setFleets} reliefBuses={reliefBuses} />
+        </Card>
 
-function Stat({ label, value, hint, alert }: { label: string; value: string; hint: string; alert?: boolean }) {
-  return (
-    <div className={`stat ${alert ? 'alert' : ''}`}>
-      <span className="label">{label}</span>
-      <span className="value">{value}</span>
-      <span className="hint">{hint}</span>
-    </div>
-  )
-}
+        {relief.length > 0 && <ReliefCard relief={relief} line={line} floor={s.fleetFloor} />}
 
-function EventForm({ date, onAdd, onMatch }: { date: string; onAdd: (e: CityEvent) => void; onMatch: () => void }) {
-  const [open, setOpen] = useState(false)
-  const [type, setType] = useState<EventType>('stadium')
-  const [name, setName] = useState('Concert at Motera')
-  const [attendance, setAttendance] = useState(80000)
-  const [start, setStart] = useState('19:00')
-  const [end, setEnd] = useState('22:30')
-  const toH = (t: string) => {
-    const [h, m] = t.split(':').map(Number)
-    return h + m / 60
-  }
-  return (
-    <div className="eventform">
-      <button className="primary" onClick={onMatch}>+ Cricket match at Motera</button>
-      <button onClick={() => setOpen((o) => !o)}>{open ? 'Close' : '+ Other event'}</button>
-      {open && (
-        <form
-          onSubmit={(e) => {
-            e.preventDefault()
-            let endH = toH(end)
-            if (endH < toH(start)) endH += 24
-            onAdd({ id: crypto.randomUUID(), date, type, name, attendance, start: toH(start), end: endH })
-            setOpen(false)
-          }}
+        <Card
+          icon={Route}
+          step="4"
+          title={`Recommended changes · ${SERVICES[line].name}`}
+          sub="Each time band: today’s frequency → recommended, with the reason in English and Gujarati."
+          actions={
+            <>
+              {just && (
+                <span className={`badge ${just.provider}`}>{busy ? 'updating…' : just.provider === 'gemini' ? 'Gemini · numbers checked' : 'Template'}</span>
+              )}
+              <button className="primary" onClick={copyPlan} disabled={busy}>
+                {copied === 'ok' ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+                {copied === 'ok' ? 'Copied' : copied === 'fail' ? 'Copy failed' : 'Copy for control room'}
+              </button>
+            </>
+          }
         >
-          <select value={type} onChange={(e) => setType(e.target.value as EventType)}>
-            <option value="stadium">Stadium event (Motera)</option>
-            <option value="exam">Exam / college day</option>
-          </select>
-          <input value={name} onChange={(e) => setName(e.target.value)} aria-label="Name" />
-          <input type="number" value={attendance} onChange={(e) => setAttendance(Number(e.target.value))} aria-label="Attendance" />
-          <input type="time" value={start} onChange={(e) => setStart(e.target.value)} aria-label="Start" />
-          <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} aria-label="End" />
-          <button className="primary" type="submit">Add</button>
-        </form>
-      )}
-    </div>
-  )
-}
+          {just?.note && <p className="note">{just.note}</p>}
+          <div className="table">
+            {plan.bands.map((b) => {
+              const text = just?.lines.find((l) => l.band === bandLabel(b))
+              const isNow = live && nowHour >= b.from && nowHour < b.to
+              return (
+                <div key={b.from} className={`band ${b.change} ${isNow ? 'now' : ''}`}>
+                  <div className="when">
+                    {bandLabel(b)}
+                    <small>{linkLabel(b.link)}</small>
+                    {isNow && <span className="nowtag">now</span>}
+                    {relief.some((r) => r.service === line && r.from < b.to && r.to > b.from) && <span className="nowtag bus">+ Janmarg</span>}
+                  </div>
+                  <div className="hw">
+                    <span className="now">{b.currentHeadway ? `${b.currentHeadway} min` : 'no service'}</span>
+                    <span className="arrow">→</span>
+                    <span className="rec">{b.recommendedHeadway ? `${b.recommendedHeadway} min` : 'none'}</span>
+                  </div>
+                  <div className="why">
+                    {b.change === 'same' ? (
+                      <span className="muted">
+                        Keep as is · {n(b.peakLoad)}/h fits {n(b.currentCapacity)}/h
+                      </span>
+                    ) : (
+                      <>
+                        <p>{text?.en ?? '…'}</p>
+                        {text?.gu && <p className="gu">{text.gu}</p>}
+                      </>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </Card>
 
-function Chart({ plan }: { plan: Plan }) {
-  const rows = plan.hours.filter((r) => r.hour >= 6)
-  const W = 720, H = 220, L = 44, B = 24, T = 10
-  const max = Math.max(...rows.map((r) => Math.max(r.load, r.currentCapacity, r.recommendedCapacity)), 1000) * 1.08
-  const bw = (W - L - 8) / rows.length
-  const x = (i: number) => L + i * bw
-  const y = (v: number) => T + (H - T - B) * (1 - v / max)
-  const step = (key: 'currentCapacity' | 'recommendedCapacity') =>
-    rows.map((r, i) => `${i ? 'L' : 'M'}${x(i)} ${y(r[key])} L${x(i + 1)} ${y(r[key])}`).join(' ')
-  const ticks = [0, max / 2, max].map((v) => Math.round(v / 500) * 500)
-  return (
-    <div className="chart">
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Hourly passenger load against current and recommended capacity">
-        {ticks.map((t) => (
-          <g key={t}>
-            <line x1={L} x2={W - 8} y1={y(t)} y2={y(t)} className="grid" />
-            <text x={L - 6} y={y(t) + 4} textAnchor="end" className="tick">{t >= 1000 ? `${t / 1000}k` : t}</text>
-          </g>
-        ))}
-        {rows.map((r, i) => (
-          <g key={r.hour}>
-            <rect x={x(i) + 2} y={y(r.load)} width={bw - 4} height={y(0) - y(r.load)} className={r.load > r.currentCapacity ? 'bar over' : 'bar'} rx={2}>
-              <title>{`${fmtHour(r.hour)}: ${n(r.load)} passengers/h · now ${n(r.currentCapacity)} · plan ${n(r.recommendedCapacity)}`}</title>
-            </rect>
-            {i % 2 === 0 && <text x={x(i) + bw / 2} y={H - 6} textAnchor="middle" className="tick">{fmtHour(r.hour).slice(0, 2)}</text>}
-          </g>
-        ))}
-        <path d={step('currentCapacity')} className="cap now" />
-        <path d={step('recommendedCapacity')} className="cap rec" />
-      </svg>
-      <div className="legend">
-        <span><i className="sw bar" /> Passengers/hour</span>
-        <span><i className="sw over" /> Above today’s capacity</span>
-        <span><i className="sw now" /> Today’s capacity</span>
-        <span><i className="sw rec" /> Recommended capacity</span>
-      </div>
+        <Card icon={ChartColumn} title="Demand vs capacity, by hour" sub="Bars: passengers on the busiest stretch. Lines: what today’s trains and the recommended trains can carry.">
+          <Chart plan={plan} />
+        </Card>
+
+        <details className="card">
+          <summary>
+            <Gauge size={16} aria-hidden="true" /> Data and assumptions
+          </summary>
+          <ul>
+            {ASSUMPTIONS.map((a) => (
+              <li key={a}>{a}</li>
+            ))}
+            <li>Event types in the search use typical crowd sizes and timings (assumptions); you choose the date.</li>
+            <li>The fleet limits frequency: trainsets ÷ round-trip time sets the shortest headway (short-turn APMC⇄Motera where needed).</li>
+          </ul>
+          <p className="muted">
+            Pilot model (PPP): a private partner builds and runs this as a service for GMRC, paid by an annual licence or a share of extra event-day fare revenue. GMRC keeps
+            the data. It never touches signalling.
+          </p>
+        </details>
+
+        <footer className="footer">
+          <p>
+            <strong>Data sources:</strong> {SOURCES} · Janmarg BRTS route map (Ahmedabad Janmarg Ltd) · Open-Meteo forecast · map tiles © OpenStreetMap contributors.
+          </p>
+          <p>Office and college timings, sizes and metro shares marked “assumed” are estimates; the plan is advice for operators and never touches signalling.</p>
+        </footer>
+      </main>
     </div>
   )
 }

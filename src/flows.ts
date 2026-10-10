@@ -256,7 +256,11 @@ export function serviceHour(ctx: DayContext, sid: ServiceId, h: number, baseLink
       extra += n
     }
     if (e.type === 'stadium') {
-      const fans = e.attendance * MODEL.stadiumMetroShare
+      // crowd event at a venue station (Motera by default); riders of the other line change at Old High Court
+      const venue = e.station && STATIONS[e.station] ? e.station : MOTERA
+      const venueName = STATIONS[venue].name
+      const venueSid: ServiceId = STATIONS[venue].lines.includes('blue') ? 'blue' : 'redYellow'
+      const fans = e.attendance * (e.metroShare ?? MODEL.stadiumMetroShare)
       const startH = Math.floor(e.start)
       const endH = Math.floor(e.end)
       const inflow: Record<number, number> = { [startH - 4]: 0.15, [startH - 3]: 0.25, [startH - 2]: 0.35, [startH - 1]: 0.25 }
@@ -265,24 +269,24 @@ export function serviceHour(ctx: DayContext, sid: ServiceId, h: number, baseLink
       if (!frac) continue
       const arriving = inflow[h] != null
       const n = fans * frac
-      const blueShare = SERVICES.blue.share
-      // Blue riders travel to Old High Court and change to Red; Red+Yellow riders ride straight to Motera.
+      const own = SERVICES[sid].share
+      const other = 1 - own
       const legs: [string, string, number][] =
-        sid === 'blue'
-          ? open.map((s) => [s, OHC, (n * blueShare * weightOf(s)) / W] as [string, string, number])
-          : [
-              [OHC, MOTERA, n * blueShare],
-              ...open.map((s) => [s, MOTERA, (n * (1 - blueShare) * weightOf(s)) / W] as [string, string, number]),
-            ]
+        sid === venueSid
+          ? [[OHC, venue, n * other], ...open.map((s) => [s, venue, (n * own * weightOf(s)) / W] as [string, string, number])]
+          : open.map((s) => [s, OHC, (n * own * weightOf(s)) / W] as [string, string, number])
       for (const [o, t, k] of legs) {
         if (o === t) continue
         if (arriving) trip(o, t, k)
         else trip(t, o, k)
       }
-      const label = `${e.name}: ${arriving ? 'fans arriving at Motera' : 'crowd leaving Motera'}`
+      const label =
+        venue === MOTERA
+          ? `${e.name}: ${arriving ? 'fans arriving at Motera' : 'crowd leaving Motera'}`
+          : `${e.name}: ${arriving ? `crowd arriving at ${venueName}` : `crowd leaving ${venueName}`}`
       drivers.push(label)
-      why(sid === 'blue' ? OHC : MOTERA, label)
-      if (sid === 'redYellow') why(OHC, `${e.name}: Blue riders changing at Old High Court`)
+      why(sid === venueSid ? venue : OHC, label)
+      if (sid === venueSid && venue !== OHC) why(OHC, `${e.name}: ${sid === 'blue' ? 'Red+Yellow' : 'Blue'} riders changing at Old High Court`)
       crush = true
       extra += n
     }

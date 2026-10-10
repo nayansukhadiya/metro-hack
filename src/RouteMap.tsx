@@ -95,7 +95,6 @@ export default function RouteMap({ ctx, initialHour, relief }: { ctx: DayContext
     <div className="routemap">
       <div className="row">
         <div className="row">
-          <h3>Network map</h3>
           <div className="toggle" role="group" aria-label="Map view">
             <button className={showMap ? 'on' : ''} aria-pressed={showMap} onClick={() => setView('map')}>
               Map

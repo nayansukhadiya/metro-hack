@@ -17,6 +17,9 @@ export interface HourRow {
   need: number // load + queue carried over from the previous hour
   carried: number // what the recommended service can move
   overflow: number // left over even at the shortest headway (BRTS relief)
+  trainsNeeded: number // trainsets in service for the recommended headway
+  trainsNow: number // trainsets in service for today's timetable
+  shortTurnHour: boolean
   backlog: number // still waiting at end of hour
   currentHeadway: number | null
   recommendedHeadway: number | null
@@ -55,7 +58,11 @@ export interface Plan {
     currentLastTrain: number
     peakTrainsNeeded: number
     fleet: number
-    fleetShort: boolean
+    /** shortest headway this fleet can sustain */
+    fleetFloor: number
+    /** the fleet, not the 5-minute limit, stopped the plan from carrying demand */
+    fleetLimited: boolean
+    peakTrainsNow: number
     shortTurn: boolean
     leftBehindCurrent: number
     currentBestHeadway: number | null
@@ -149,9 +156,26 @@ export function linkCalibration(sid: ServiceId): number {
   return (linkCal[sid] = (MODEL.peakFill * (60 / best) * MODEL.trainCapacityComfort) / raw)
 }
 
-export function computePlan(ctx: DayContext, sid: ServiceId = 'redYellow'): Plan {
+/** Smallest allowed headway that is at least x minutes. */
+const ceilHeadway = (x: number) => MODEL.allowedHeadways.find((h) => h >= x - 1e-9) ?? Math.ceil(x)
+
+/** Trainsets needed to run every `headway` min: full run, or short-turn when the full run needs more than the fleet. */
+export function trainsFor(sid: ServiceId, headway: number, fleet: number): { trains: number; shortTurn: boolean } {
+  const ops = OPERATIONS[sid]
+  const full = Math.ceil(ops.cycleFullMin / headway)
+  if (full <= fleet || ops.cycleShortTurnMin == null) return { trains: full, shortTurn: false }
+  return { trains: Math.ceil(ops.cycleShortTurnMin / headway), shortTurn: true }
+}
+
+export function computePlan(ctx: DayContext, sid: ServiceId = 'redYellow', fleetSize?: number): Plan {
   const { holiday, lowTravel, workingDay, rainy } = dayModel(ctx)
   const ops = OPERATIONS[sid]
+  const fleet = fleetSize ?? ops.fleet
+  // the fleet sets the shortest headway it can sustain (short-turn where the line has one)
+  const fleetFloor = Math.max(
+    MODEL.minHeadway,
+    Math.min(ceilHeadway(ops.cycleFullMin / fleet), ops.cycleShortTurnMin != null ? ceilHeadway(ops.cycleShortTurnMin / fleet) : Infinity),
+  )
 
   // the timetable that would run today (holidays run the Sunday pattern)
   const pattern: DayPattern = workingDay ? ctx.dayType : 'sunday'
@@ -184,7 +208,7 @@ export function computePlan(ctx: DayContext, sid: ServiceId = 'redYellow'): Plan
     if (run) {
       const tph = Math.ceil(need / cap)
       recH = roundHeadway(Math.min(maxH, 60 / Math.max(tph, 1)))
-      if (recH < MODEL.minHeadway) recH = MODEL.minHeadway
+      if (recH < fleetFloor) recH = fleetFloor
       // only thin out service when trains would be under 60% full, and only on days the published
       // timetable was not written for (holidays, low-travel days)
       const cur = current(h)
@@ -194,7 +218,7 @@ export function computePlan(ctx: DayContext, sid: ServiceId = 'redYellow'): Plan
     const recCap = recH ? (60 / recH) * cap : 0
     const carried = Math.min(need, recCap)
     // what even the 5-minute limit cannot carry this hour: the surge to hand to Janmarg BRTS
-    const overflow = recH === MODEL.minHeadway ? Math.max(0, need - recCap) : 0
+    const overflow = recH === fleetFloor ? Math.max(0, need - recCap) : 0
     backlog = recH ? Math.max(0, need - recCap) : 0 // no train: riders choose another mode
 
     const curH = h <= 23 ? current(h) : null
@@ -206,13 +230,22 @@ export function computePlan(ctx: DayContext, sid: ServiceId = 'redYellow'): Plan
       backlogCurrent = 0
     }
 
-    if (backlog > 0 && recH === MODEL.minHeadway) drivers.push('demand above the 5-minute limit: queue carries over')
+    if (backlog > 0 && recH === fleetFloor)
+      drivers.push(
+        fleetFloor > MODEL.minHeadway
+          ? `fleet limit: ${fleet} trainsets allow every ${fleetFloor} min at best, queue carries over`
+          : 'demand above the 5-minute limit: queue carries over',
+      )
+    const run_ = recH ? trainsFor(sid, recH, fleet) : { trains: 0, shortTurn: false }
     hours.push({
       hour: h,
       load: Math.round(load),
       need: Math.round(need),
       carried: Math.round(carried),
       overflow: Math.round(overflow),
+      trainsNeeded: run_.trains,
+      trainsNow: curH ? trainsFor(sid, curH, fleet).trains : 0,
+      shortTurnHour: run_.shortTurn,
       backlog: Math.round(backlog),
       currentHeadway: curH,
       recommendedHeadway: recH,
@@ -241,10 +274,9 @@ export function computePlan(ctx: DayContext, sid: ServiceId = 'redYellow'): Plan
   const extra = hours.reduce((s, r) => s + Math.max(0, tph(r.recommendedHeadway) - tph(r.currentHeadway)), 0)
   const lastRec = [...hours].reverse().find((r) => r.recommendedHeadway)
   const lastCur = [...hours].reverse().find((r) => r.currentHeadway)
-  const minH = Math.min(...hours.map((r) => r.recommendedHeadway ?? 99))
-  const fullTrains = Math.ceil(ops.cycleFullMin / minH)
-  const shortTurn = fullTrains > ops.fleet && ops.cycleShortTurnMin != null
-  const peakTrainsNeeded = shortTurn ? Math.ceil(ops.cycleShortTurnMin! / minH) : fullTrains
+  const peakTrainsNeeded = Math.max(0, ...hours.map((r) => r.trainsNeeded))
+  const shortTurn = hours.some((r) => r.shortTurnHour)
+  const fleetLimited = hours.some((r) => r.recommendedHeadway === fleetFloor && fleetFloor > MODEL.minHeadway && r.need > r.carried)
   const curHeadways = hours.map((r) => r.currentHeadway).filter((x): x is number => x != null)
 
   return {
@@ -260,8 +292,10 @@ export function computePlan(ctx: DayContext, sid: ServiceId = 'redYellow'): Plan
       lastTrain: lastRec ? lastRec.hour + 1 : null,
       currentLastTrain: lastCur ? lastCur.hour + 1 : 23,
       peakTrainsNeeded,
-      fleet: ops.fleet,
-      fleetShort: peakTrainsNeeded > ops.fleet,
+      fleet,
+      fleetFloor,
+      fleetLimited,
+      peakTrainsNow: Math.max(0, ...hours.map((r) => r.trainsNow)),
       shortTurn,
       leftBehindCurrent: Math.round(leftBehindCurrent + backlogCurrent),
       currentBestHeadway: curHeadways.length ? Math.min(...curHeadways) : null,

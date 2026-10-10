@@ -9,11 +9,21 @@ Janmarg BRTS with extra buses on the corridors next to the overloaded stretch.
 - `src/generators.ts`: offices, colleges, hubs, industry, temples with arrive/leave timings and day rules
 - `src/flows.ts`: hourly boardings, alightings and link loads per line (generators + background, gravity destinations, events)
 - `src/engine.ts`: busiest link per hour → headway per band, fleet check, last train, overflow
+- `src/eventCatalog.ts`: searchable event types (cricket, concerts, Kankaria Carnival, exams…) with typical crowds and timings
+- `src/ui/`: calendar + event search, fleet panel (trainsets per hour, editable fleet, options), shared cards
 - `src/brts.ts`: Janmarg network (from the Janmarg route map), metro ⇄ BRTS walking links, surge relief routing
 - `src/justify.ts`: Gemini justification (numbers validated against the plan) with template fallback
 - `api/justify.ts`: Vercel function that calls Gemini (key stays server-side)
 - `src/weather.ts`: Open-Meteo rain forecast (free, no key)
 - Map views: generated schematic, OpenStreetMap (Leaflet, needs `src/stations-geo.json`), Janmarg BRTS
+
+## Vercel environment variables
+| Name | Required | Value |
+|---|---|---|
+| `GEMINI_API_KEY` | for Gemini text | Google AI Studio API key |
+| `GEMINI_MODEL` | no | defaults to `gemini-2.5-flash` |
+
+Redeploy after adding them. Without the key the app uses template text (English + Gujarati).
 
 ## Run
     npm install
@@ -22,5 +32,4 @@ Janmarg BRTS with extra buses on the corridors next to the overloaded stretch.
     npx tsx scripts/fetch-stations.ts  # one-time: station coordinates for the real map
 
 ## Deploy (Vercel)
-Import the repo as a Vite project. Add env var `GEMINI_API_KEY` (optional `GEMINI_MODEL`).
-Without the key, the app still works and uses template justifications.
+Import the repo as a Vite project and add the environment variables above.

@@ -44,6 +44,10 @@ export interface CityEvent {
   attendance: number // stadium: spectators; exam: students
   start: number // hour, decimal (19.5 = 19:30)
   end: number // hour, can exceed 24
+  /** crowd events: metro station at the venue (default Motera Stadium) */
+  station?: string
+  /** crowd events: share of attendees using the metro (default MODEL.stadiumMetroShare) */
+  metroShare?: number
 }
 
 export const MODEL = {
