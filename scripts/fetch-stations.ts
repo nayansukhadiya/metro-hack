@@ -1,5 +1,7 @@
-// One-time fetch of station coordinates → src/stations-geo.json. Never runs in the app.
-//   npx tsx scripts/fetch-stations.ts
+// Fetch station coordinates → src/stations-geo.json. Never runs in the app.
+//   npm run stations                      (always fetch)
+//   tsx scripts/fetch-stations.ts --if-missing   (prebuild on Vercel: only when stations lack coordinates)
+// Never fails: on any network or parse error it keeps what the file already has, so a build always succeeds.
 // 1. GMRC's Google My Maps as KML (KMZ is unzipped).  2. Overpass API fallback.
 // Names are matched to network.ts; unmatched names are printed so they can be filled by hand.
 // Entries already in stations-geo.json that this run cannot match are kept (hand fixes survive).
@@ -7,7 +9,10 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { inflateRawSync } from 'node:zlib'
 import { STATIONS } from '../src/network.ts'
 
-const OUT = new URL('../src/stations-geo.json', import.meta.url)
+const OUT = process.env.STATIONS_OUT ? new URL(`file://${process.env.STATIONS_OUT}`) : new URL('../src/stations-geo.json', import.meta.url)
+const TIMEOUT_MS = 20_000
+// Ahmedabad–Gandhinagar; anything outside is a wrong name match
+const inArea = (lat: number, lng: number) => lat > 22.9 && lat < 23.35 && lng > 72.45 && lng < 72.75
 const KML_URL = 'https://www.google.com/maps/d/kml?mid=1ebnAmbRUbMyI_quB06reRZWcyfcLF8M&forcekml=1'
 const OVERPASS = 'https://overpass-api.de/api/interpreter'
 const BBOX = '22.95,72.50,23.30,72.72'
@@ -70,7 +75,7 @@ function unzipFirstKml(buf: Buffer): string {
 }
 
 async function fromKml(): Promise<{ raw: string; lat: number; lng: number }[]> {
-  const r = await fetch(KML_URL)
+  const r = await fetch(KML_URL, { signal: AbortSignal.timeout(TIMEOUT_MS) })
   if (!r.ok) throw new Error(`KML HTTP ${r.status}`)
   const buf = Buffer.from(await r.arrayBuffer())
   const text = buf.subarray(0, 2).toString() === 'PK' ? unzipFirstKml(buf) : buf.toString('utf8')
@@ -89,12 +94,25 @@ node["railway"="station"]["station"="subway"](${BBOX});
 node["public_transport"="station"]["subway"="yes"](${BBOX});
 node["railway"="station"]["network"~"Ahmedabad Metro|GMRC"](${BBOX});
 );out body;`
-  const r = await fetch(OVERPASS, { method: 'POST', body: new URLSearchParams({ data: q }) })
+  const r = await fetch(OVERPASS, { method: 'POST', body: new URLSearchParams({ data: q }), signal: AbortSignal.timeout(TIMEOUT_MS) })
   if (!r.ok) throw new Error(`Overpass HTTP ${r.status}`)
   const d = (await r.json()) as { elements: { lat: number; lon: number; tags?: Record<string, string> }[] }
   return d.elements.flatMap((e) =>
     [e.tags?.['name:en'], e.tags?.name].filter(Boolean).map((raw) => ({ raw: raw!, lat: e.lat, lng: e.lon })),
   )
+}
+
+const previous: Geo[] = (() => {
+  try {
+    return existsSync(OUT) ? JSON.parse(readFileSync(OUT, 'utf8')) : []
+  } catch {
+    return []
+  }
+})()
+const have = new Set(previous.map((g) => g.name).filter((n) => ours.includes(n)))
+if (process.argv.includes('--if-missing') && ours.every((n) => have.has(n))) {
+  console.log(`stations-geo.json already has all ${ours.length} stations; skipping fetch`)
+  process.exit(0)
 }
 
 const found = new Map<string, Geo>()
@@ -110,6 +128,7 @@ for (const [label, src] of [
     for (const r of rows) {
       const name = match(r.raw)
       if (!name) unknown.add(`${r.raw} (${label})`)
+      else if (!inArea(r.lat, r.lng)) unknown.add(`${r.raw} at ${r.lat},${r.lng} outside Ahmedabad (${label})`)
       else if (!found.has(name)) {
         found.set(name, { name, lat: +r.lat.toFixed(6), lng: +r.lng.toFixed(6) })
         added++
@@ -121,12 +140,15 @@ for (const [label, src] of [
   }
 }
 
-const previous: Geo[] = existsSync(OUT) ? JSON.parse(readFileSync(OUT, 'utf8')) : []
 for (const g of previous) if (!found.has(g.name) && ours.includes(g.name)) found.set(g.name, g)
 
 const missing = ours.filter((n) => !found.has(n))
 const rows = ours.filter((n) => found.has(n)).map((n) => found.get(n)!)
-writeFileSync(OUT, JSON.stringify(rows, null, 1) + '\n')
+try {
+  writeFileSync(OUT, JSON.stringify(rows, null, 1) + '\n')
+} catch (e) {
+  console.log(`could not write stations-geo.json: ${(e as Error).message}`)
+}
 console.log(`\nwrote ${rows.length}/${ours.length} stations to src/stations-geo.json`)
 if (missing.length) console.log(`UNMATCHED (fill by hand from the map): ${missing.join(', ')}`)
 if (unknown.size) console.log(`source names not recognised (add to ALIASES if they are ours): ${[...unknown].join('; ')}`)
